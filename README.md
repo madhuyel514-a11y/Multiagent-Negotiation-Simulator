@@ -1,16 +1,321 @@
-# React + Vite
+# Disaster Relief Resource Negotiation System
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A web-based Multi-Agent Disaster Relief Negotiation Simulator that models how different disaster response stakeholders negotiate resource allocation during emergencies.
 
-Currently, two official plugins are available:
+This project enables users to select disaster scenarios, configure AI agent personalities, and prepare a negotiation session through an intuitive web interface.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+> **Current Status:** Milestone 1 (Frontend Completed)
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+# Project Overview
 
-## Expanding the Oxlint configuration
+The Disaster Relief Resource Negotiation System simulates negotiations between multiple stakeholders involved in disaster management.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+The system currently supports:
+
+- Scenario Selection
+- Agent Configuration
+- Personality Selection
+- Negotiation Preparation Dashboard
+
+Future milestones will integrate AI-powered negotiation using LLMs and a FastAPI backend.
+
+---
+
+# Features Implemented (Milestone 1)
+
+## Home Dashboard
+
+- Modern landing page
+- Project overview
+- Navigation bar
+- Progress indicator
+- Responsive UI
+- Feature overview cards
+
+---
+
+## Scenario Selection
+
+Users can choose from three disaster scenarios:
+
+- Flood Relief Resource Allocation
+- Earthquake Emergency Response
+- Cyclone Relief Coordination
+
+Each scenario contains:
+
+- Description
+- Three participating agents
+- Resource allocation context
+
+Selected scenario is stored using Local Storage.
+
+---
+
+## Agent Configuration
+
+Each scenario automatically loads three stakeholders:
+
+- Government Agent
+- NGO Agent
+- District Administration Agent
+
+Each agent includes:
+
+- Role
+- Primary Goal
+- Operational Constraints
+- Personality Configuration
+
+Users can select one of three personalities:
+
+- Aggressive
+- Collaborative
+- Risk-Averse
+
+The selected personalities are stored locally before negotiation begins.
+
+---
+
+## Negotiation Arena
+
+Milestone 1 includes a frontend negotiation dashboard displaying:
+
+- Selected Scenario
+- Selected Agent Personalities
+- Scenario Summary
+- System Status
+- Negotiation Transcript Placeholder
+- Future AI Features Preview
+
+No AI negotiation is executed yet.
+
+---
+
+# Disaster Scenarios
+
+### Flood Relief Resource Allocation
+
+Allocate:
+
+- Food
+- Medicine
+- Rescue Boats
+- Temporary Shelters
+
+---
+
+### Earthquake Emergency Response
+
+Coordinate:
+
+- Rescue Teams
+- Medical Aid
+- Temporary Shelters
+
+---
+
+### Cyclone Relief Coordination
+
+Coordinate:
+
+- Evacuation
+- Food Distribution
+- Infrastructure Restoration
+
+---
+
+# AI Agents
+
+## Government Agent
+
+Responsible for:
+
+- Policy decisions
+- Resource allocation
+- Public safety
+
+---
+
+## NGO Agent
+
+Responsible for:
+
+- Humanitarian assistance
+- Medical support
+- Relief distribution
+
+---
+
+## District Administration Agent
+
+Responsible for:
+
+- Local coordination
+- Shelter management
+- Ground-level execution
+
+---
+
+# Technology Stack
+
+## Frontend
+
+- React.js
+- Vite
+- React Router
+- Tailwind CSS
+
+## Backend (Planned)
+
+- Python
+- FastAPI
+- REST APIs
+
+## AI (Planned)
+
+- Google Gemini API
+
+## Version Control
+
+- Git
+- GitHub
+
+---
+
+# Project Structure
+
+```
+src
+│
+├── assets
+│
+├── components
+│   ├── Navbar.jsx
+│   ├── Layout.jsx
+│   ├── ScenarioCard.jsx
+│   └── AgentCard.jsx
+│
+├── data
+│   └── scenarios.js
+│
+├── pages
+│   ├── Home.jsx
+│   ├── ScenarioSelection.jsx
+│   ├── AgentConfiguration.jsx
+│   └── NegotiationArena.jsx
+│
+├── App.jsx
+├── main.jsx
+└── index.css
+```
+
+---
+
+# Installation
+
+Clone the repository
+
+```bash
+git clone https://github.com/madhuyel514-a11y/Multiagent-Negotiation-Simulator.git
+```
+
+Move into the project directory
+
+```bash
+cd Multiagent-Negotiation-Simulator
+```
+
+Install dependencies
+
+```bash
+npm install
+```
+
+Run the application
+
+```bash
+npm run dev
+```
+
+Open your browser
+
+```
+http://localhost:5173
+```
+
+---
+
+# Current Workflow
+
+```
+Home
+        ↓
+
+Scenario Selection
+        ↓
+
+Agent Configuration
+        ↓
+
+Negotiation Arena
+```
+
+---
+
+# Current Milestone Status
+
+## Completed
+
+- React Project Setup
+- Routing using React Router
+- Responsive User Interface
+- Scenario Selection Module
+- Agent Configuration Module
+- Personality Selection
+- Negotiation Preparation Dashboard
+- Local Storage Integration
+- Modular Component Architecture
+
+---
+
+## In Progress
+
+- FastAPI Backend
+- REST API Integration
+- Negotiation Orchestrator
+- AI Agent Communication
+- Gemini API Integration
+
+---
+
+## Planned
+
+- Live Multi-Agent Negotiation
+- Conversation Transcript
+- Consensus Detection
+- Deadlock Resolution
+- Negotiation Evaluation
+- Runtime History
+- Negotiation Analytics Dashboard
+
+---
+
+# Future Architecture
+
+The complete system will consist of:
+
+- React Frontend
+- FastAPI Backend
+- Negotiation Orchestrator
+- Government Agent
+- NGO Agent
+- District Administration Agent
+- Gemini AI Integration
+- Evaluation Engine
+- Runtime Storage
+- Negotiation Dashboard
+
+---
