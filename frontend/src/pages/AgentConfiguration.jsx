@@ -6,6 +6,7 @@ function AgentConfiguration() {
   const navigate = useNavigate();
   const [selectedScenario, setSelectedScenario] = useState(null);
   const [personalities, setPersonalities] = useState({});
+  const [maxRounds, setMaxRounds] = useState(5);
 
   useEffect(() => {
     const storedScenario = localStorage.getItem('selectedScenario');
@@ -21,6 +22,17 @@ function AgentConfiguration() {
     }
   }, []);
 
+  useEffect(() => {
+    // load existing negotiationConfig maxRounds if present
+    const stored = localStorage.getItem('negotiationConfig');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.max_rounds) setMaxRounds(parsed.max_rounds);
+      } catch (e) {}
+    }
+  }, []);
+
   const handlePersonalityChange = (agentId, personality) => {
     setPersonalities((prev) => ({ ...prev, [agentId]: personality }));
   };
@@ -30,8 +42,26 @@ function AgentConfiguration() {
       scenario: selectedScenario,
       agents: selectedScenario.agents.map((agent) => ({
         id: agent.id,
+        name: agent.name,
+        role: agent.role,
         personality: personalities[agent.id]
       }))
+    };
+
+    localStorage.setItem('negotiationConfig', JSON.stringify(negotiationConfig));
+    navigate('/negotiation');
+  };
+
+  const handleStartWithMaxRounds = () => {
+    const negotiationConfig = {
+      scenario: selectedScenario,
+      agents: selectedScenario.agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        role: agent.role,
+        personality: personalities[agent.id]
+      })),
+      max_rounds: maxRounds,
     };
 
     localStorage.setItem('negotiationConfig', JSON.stringify(negotiationConfig));
@@ -74,14 +104,29 @@ function AgentConfiguration() {
         ))}
       </div>
 
-      <div className="mt-10 flex justify-center">
-        <button
-          type="button"
-          onClick={handleStartNegotiation}
-          className="rounded-full bg-blue-600 px-8 py-3 text-lg font-semibold text-white shadow-md transition duration-300 hover:scale-105 hover:bg-blue-700"
-        >
-          Start Negotiation
-        </button>
+      <div className="mt-8 grid gap-6 md:grid-cols-2">
+        <div>
+          <label className="block text-sm font-medium text-slate-700">Maximum Negotiation Rounds</label>
+          <select
+            value={maxRounds}
+            onChange={(e) => setMaxRounds(Number(e.target.value))}
+            className="mt-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+          >
+            {[3,5,10,15,20].map((v) => (
+              <option key={v} value={v}>{v} rounds</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center justify-center">
+          <button
+            type="button"
+            onClick={handleStartWithMaxRounds}
+            className="rounded-full bg-blue-600 px-8 py-3 text-lg font-semibold text-white shadow-md transition duration-300 hover:scale-105 hover:bg-blue-700"
+          >
+            Start Negotiation
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -4,6 +4,16 @@ export const scenarios = [
     title: 'Flood Relief Resource Allocation',
     description:
       'Allocate food, medicine, rescue boats, temporary shelters, and emergency supplies among affected districts.',
+    category: 'Flood Response',
+    objective:
+      'Fairly allocate limited emergency resources across affected districts while prioritizing life-saving operations.',
+    resources: ['Food', 'Medicine', 'Rescue Boats', 'Temporary Shelters', 'Emergency Supplies'],
+    challenges: [
+      'Limited resources',
+      'Damaged transportation routes',
+      'Unequal district requirements'
+    ],
+    negotiationFocus: 'Prioritizing resource allocation between stakeholders',
     agents: [
       {
         id: 1,
@@ -48,6 +58,16 @@ export const scenarios = [
     title: 'Earthquake Emergency Response',
     description:
       'Coordinate rescue teams, medical aid, debris clearance, and temporary shelters after a major earthquake.',
+    category: 'Emergency Response',
+    objective:
+      'Rapidly coordinate search-and-rescue and medical aid while restoring essential services.',
+    resources: ['Rescue Teams', 'Medical Aid', 'Temporary Shelters', 'Debris Clearance Equipment'],
+    challenges: [
+      'Restricted access to damaged zones',
+      'Overwhelmed medical facilities',
+      'Broken transport infrastructure'
+    ],
+    negotiationFocus: 'Coordinating rescue priorities and medical resource distribution',
     agents: [
       {
         id: 1,
@@ -92,6 +112,16 @@ export const scenarios = [
     title: 'Cyclone Relief Coordination',
     description:
       'Coordinate evacuation efforts, food distribution, infrastructure restoration, and emergency communication after a cyclone.',
+    category: 'Cyclone Relief',
+    objective:
+      'Organize safe evacuations and restore vital services while distributing emergency supplies efficiently.',
+    resources: ['Evacuation Transport', 'Food', 'Shelter Materials', 'Communication Equipment'],
+    challenges: [
+      'Severe weather disruption',
+      'Widespread infrastructure damage',
+      'Intermittent power and communications'
+    ],
+    negotiationFocus: 'Balancing evacuation, distribution, and infrastructure repair priorities',
     agents: [
       {
         id: 1,

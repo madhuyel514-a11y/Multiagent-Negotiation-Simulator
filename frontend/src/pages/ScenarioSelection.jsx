@@ -22,14 +22,15 @@ function ScenarioSelection() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {scenarios.map((scenario) => (
-          <ScenarioCard
-            key={scenario.id}
-            title={scenario.title}
-            description={scenario.description}
-            onSelect={() => handleSelectScenario(scenario)}
-          />
-        ))}
+          {scenarios.map((scenario) => (
+            <ScenarioCard
+              key={scenario.id}
+              title={scenario.title}
+              description={scenario.description}
+              scenario={scenario}
+              onSelect={() => handleSelectScenario(scenario)}
+            />
+          ))}
       </div>
     </div>
   );
