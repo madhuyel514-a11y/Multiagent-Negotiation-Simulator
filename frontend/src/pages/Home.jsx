@@ -54,6 +54,7 @@ function Home() {
           <p className="mt-6 max-w-2xl text-lg leading-8 text-blue-50 sm:text-xl">
             Simulate AI-powered negotiations between Government, NGO, and District Administration stakeholders to allocate disaster relief resources efficiently during emergencies.
           </p>
+          {/*
           <div className="mt-8 flex flex-wrap gap-3">
             <button
               type="button"
@@ -71,6 +72,36 @@ function Home() {
               Learn More
             </button>
           </div>
+        */}
+        <div className="mt-8 flex flex-wrap gap-3">
+  <button
+    type="button"
+    onClick={() => navigate('/scenarios')}
+    className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-base font-semibold text-blue-700 shadow-lg transition-all duration-300 hover:scale-105 hover:bg-slate-100"
+  >
+    <PlayCircle size={18} />
+    AI vs AI Simulation
+  </button>
+
+  <button
+    type="button"
+    onClick={() => navigate('/practice')}
+    className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white transition-all duration-300 hover:scale-105 hover:bg-white/20"
+  >
+    <Users size={18} />
+    Human Practice Mode
+  </button>
+
+  <button
+    type="button"
+    onClick={handleLearnMore}
+    className="rounded-full border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white transition-all duration-300 hover:scale-105 hover:bg-white/20"
+  >
+    Learn More
+  </button>
+</div>
+
+
         </div>
       </section>
 
