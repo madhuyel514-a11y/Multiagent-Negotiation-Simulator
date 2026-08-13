@@ -1,12 +1,12 @@
 import asyncio
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from agents.government_agent import GovernmentAgent
 from agents.ngo_agent import NGOAgent
 from agents.district_agent import DistrictAdministrationAgent
-from services.gemini_service import ask_model
 from services.evaluation_engine import calculate_consensus
+from services.reasoning_engine import generate as reasoning_generate
 
 
 class NegotiationOrchestrator:
@@ -164,6 +164,156 @@ class NegotiationOrchestrator:
     ) -> bool:
 
         return session_id in self.sessions
+
+    # ---------------------------------------------------------
+    # BUILD AGENT CONTEXT
+    # ---------------------------------------------------------
+
+    def get_agent_context(
+        self,
+        session_id: str,
+        agent_id: str
+    ) -> Dict[str, Any]:
+
+        if session_id not in self.sessions:
+            raise ValueError("Session not found.")
+
+        entry = self.sessions[session_id]
+
+        state = entry["state"]
+
+        # Find agent
+        agent_obj = None
+        for a in entry["agents"]:
+            if str(a.id) == str(agent_id) or str(a.name) == str(agent_id):
+                agent_obj = a
+                break
+
+        if agent_obj is None:
+            # fallback to current agent
+            agent_obj = entry["agents"][state.get("current_agent_idx", 0) % len(entry["agents"])]
+
+        # Build structured context without calling any LLM
+        context = {
+            "session_id": state.get("session_id"),
+            "scenario": state.get("scenario"),
+            "agent": {
+                "id": agent_obj.id,
+                "name": agent_obj.name,
+                "role": agent_obj.role,
+                "personality": agent_obj.personality,
+                "primary_goal": agent_obj.primary_goal,
+                "constraints": agent_obj.constraints,
+            },
+            "current_round": state.get("current_round"),
+            "max_rounds": state.get("max_rounds"),
+            "negotiation_status": state.get("status"),
+            "negotiation_ended": state.get("negotiation_ended"),
+            "history": list(state.get("history", [])),
+        }
+
+        # Determine previous and latest offers/proposals
+        context["previous_offers"] = [h for h in context["history"] if h.get("action") in ("Offer", "CounterOffer") or h.get("stance")]
+
+        return context
+
+    # ---------------------------------------------------------
+    # RECORD TURN
+    # ---------------------------------------------------------
+
+    def record_turn(
+        self,
+        session_id: str,
+        agent_id: str,
+        message: str,
+        reasoning: str = "",
+        stance: str = "neutral",
+        action: str = "Offer",
+    ) -> None:
+
+        if session_id not in self.sessions:
+            raise ValueError("Session not found.")
+
+        entry = self.sessions[session_id]
+        state = entry["state"]
+        agents = entry["agents"]
+
+        # Find agent object by id
+        agent_obj = None
+        for a in agents:
+            if str(a.id) == str(agent_id) or str(a.name) == str(agent_id):
+                agent_obj = a
+                break
+
+        if agent_obj is None:
+            raise ValueError("Agent not found in session.")
+
+        reported_round = state.get("current_round", 1)
+
+        # Append structured history entry
+        entry_obj = {
+            "agent": agent_obj.name,
+            "agent_id": agent_obj.id,
+            "message": message,
+            "reasoning": reasoning,
+            "stance": stance,
+            "action": action,
+            "round": reported_round,
+        }
+
+        state.setdefault("history", []).append(entry_obj)
+
+        # Advance current_agent_idx deterministically
+        state["current_agent_idx"] = (state.get("current_agent_idx", 0) + 1) % len(agents)
+
+        # Check if round completed (all agents have acted)
+        round_completed = state["current_agent_idx"] == 0
+
+        if round_completed:
+            # If we've already reached max rounds, do not start a new round.
+            if state.get("current_round", 1) >= state.get("max_rounds", 5):
+                # Calculate consensus at end of final round
+                try:
+                    state["consensus"] = calculate_consensus(state) or 0.0
+                except Exception as error:
+                    print("Consensus calculation error:", error)
+                    state["consensus"] = 0.0
+
+                # Mark termination due to reaching max rounds; do NOT increment round
+                state["max_rounds_reached"] = True
+                state["negotiation_ended"] = True
+
+            else:
+                # Advance to next round
+                state["current_round"] = state.get("current_round", 1) + 1
+
+                # Calculate consensus at end of round
+                try:
+                    state["consensus"] = calculate_consensus(state) or 0.0
+                except Exception as error:
+                    print("Consensus calculation error:", error)
+                    state["consensus"] = 0.0
+
+        # Update status flags
+        state["consensus_reached"] = state.get("consensus", 0) >= 0.9
+
+        state["max_rounds_reached"] = (
+            state.get("max_rounds_reached", False)
+            or (
+                state.get("current_round", 1) > state.get("max_rounds", 5)
+                and not state.get("consensus_reached", False)
+            )
+        )
+
+        state["negotiation_ended"] = state.get("consensus_reached", False) or state.get("max_rounds_reached", False)
+
+        if state.get("consensus_reached", False):
+            state["status"] = "consensus_reached"
+        elif state.get("max_rounds_reached", False):
+            state["status"] = "max_rounds_reached"
+        else:
+            state["status"] = "ongoing"
+
 
     # ---------------------------------------------------------
     # GET STATE
@@ -418,244 +568,68 @@ class NegotiationOrchestrator:
         agent = agents[current_idx]
 
         # -----------------------------------------------------
-        # BUILD CONTEXT
+        # BUILD CONTEXT FOR CURRENT AGENT
         # -----------------------------------------------------
 
-        context = {
-            "scenario": state["scenario"],
+        current_agent_obj = agents[current_idx]
 
-            "history": state["history"],
-
-            "round": state["current_round"],
-        }
-
-        # -----------------------------------------------------
-        # ASK GEMINI / LLM
-        # -----------------------------------------------------
-
-        result = await agent.act(
-            context,
-            ask_model
+        context = self.get_agent_context(
+            session_id=session_id,
+            agent_id=current_agent_obj.id,
         )
 
         # -----------------------------------------------------
-        # NORMALIZE RESPONSE
+        # CALL REASONING ENGINE (stub for now)
         # -----------------------------------------------------
 
+        result = await reasoning_generate(context, current_agent_obj)
+
+        # Normalize response
         if isinstance(result, dict):
-
-            message = result.get(
-                "message",
-                ""
-            )
-
-            reasoning = result.get(
-                "reasoning",
-                ""
-            )
-
-            stance = result.get(
-                "stance",
-                "neutral"
-            )
-
+            message = result.get("message", "")
+            reasoning = result.get("reasoning", "")
+            stance = result.get("stance", "neutral")
+            action = result.get("action", "Offer")
         else:
-
             message = str(result)
-
             reasoning = ""
-
             stance = "neutral"
+            action = "Offer"
 
-        # -----------------------------------------------------
-        # SAVE AGENT MESSAGE
-        # -----------------------------------------------------
-
-        reported_round = state[
-            "current_round"
-        ]
-
-        state["history"].append(
-            {
-                "agent": agent.name,
-
-                "message": message,
-
-                "reasoning": reasoning,
-
-                "stance": stance,
-
-                "round": reported_round,
-            }
+        # Record the turn using new method
+        self.record_turn(
+            session_id=session_id,
+            agent_id=current_agent_obj.id,
+            message=message,
+            reasoning=reasoning,
+            stance=stance,
+            action=action,
         )
 
-        # -----------------------------------------------------
-        # MOVE TO NEXT AGENT
-        # -----------------------------------------------------
+        # After recording, rebuild state vars for response
+        state = self.sessions[session_id]["state"]
 
-        state["current_agent_idx"] = (
-            state["current_agent_idx"] + 1
-        ) % len(agents)
+        next_idx = state["current_agent_idx"] % len(agents)
+        next_agent = agents[next_idx].name
 
-        round_completed = (
-            state["current_agent_idx"] == 0
-        )
-
-        if round_completed:
-
-            state["current_round"] += 1
-
-        # -----------------------------------------------------
-        # CALCULATE CONSENSUS
-        # -----------------------------------------------------
-
-        if round_completed:
-
-            try:
-
-                state["consensus"] = (
-                    calculate_consensus(
-                        state
-                    ) or 0.0
-                )
-
-            except Exception as error:
-
-                print(
-                    "Consensus calculation error:",
-                    error
-                )
-
-                state["consensus"] = 0.0
-
-        # -----------------------------------------------------
-        # DETERMINE NEGOTIATION STATUS
-        # -----------------------------------------------------
-
-        state["consensus_reached"] = (
-            state.get(
-                "consensus",
-                0
-            ) >= 0.9
-        )
-
-        state["max_rounds_reached"] = (
-            state.get(
-                "current_round",
-                1
-            )
-            > state.get(
-                "max_rounds",
-                5
-            )
-            and not state.get(
-                "consensus_reached",
-                False
-            )
-        )
-
-        state["negotiation_ended"] = (
-            state.get(
-                "consensus_reached",
-                False
-            )
-            or state.get(
-                "max_rounds_reached",
-                False
-            )
-        )
-
-        if state["consensus_reached"]:
-
-            state["status"] = (
-                "consensus_reached"
-            )
-
-        elif state["max_rounds_reached"]:
-
-            state["status"] = (
-                "max_rounds_reached"
-            )
-
-        else:
-
-            state["status"] = "ongoing"
-
-        # -----------------------------------------------------
-        # NEXT AGENT
-        # -----------------------------------------------------
-
-        next_idx = (
-            state["current_agent_idx"]
-            % len(agents)
-        )
-
-        next_agent = agents[
-            next_idx
-        ].name
-
-        # -----------------------------------------------------
-        # RETURN RESULT
-        # -----------------------------------------------------
+        reported_round = min(state.get("current_round", 1), state.get("max_rounds", 5))
 
         return {
-            "agent": agent.name,
-
-            "personality": agent.personality,
-
-            "round": min(
-                reported_round,
-                state.get(
-                    "max_rounds",
-                    5
-                )
-            ),
-
-            "current_agent_idx": state.get(
-                "current_agent_idx"
-            ),
-
+            "agent": current_agent_obj.name,
+            "personality": current_agent_obj.personality,
+            "round": reported_round,
+            "current_agent_idx": state.get("current_agent_idx"),
             "message": message,
-
             "reasoning": reasoning,
-
             "stance": stance,
-
-            "consensus": state.get(
-                "consensus",
-                0.0
-            ),
-
-            "consensus_reached": state.get(
-                "consensus_reached",
-                False
-            ),
-
-            "negotiation_ended": state.get(
-                "negotiation_ended",
-                False
-            ),
-
-            "max_rounds_reached": state.get(
-                "max_rounds_reached",
-                False
-            ),
-
-            "negotiation_status": state.get(
-                "status"
-            ),
-
+            "consensus": state.get("consensus", 0.0),
+            "consensus_reached": state.get("consensus_reached", False),
+            "negotiation_ended": state.get("negotiation_ended", False),
+            "max_rounds_reached": state.get("max_rounds_reached", False),
+            "negotiation_status": state.get("status"),
             "next_agent": next_agent,
-
-            "history": state.get(
-                "history",
-                []
-            ),
-
-            "max_rounds": state.get(
-                "max_rounds",
-                5
-            ),
+            "history": state.get("history", []),
+            "max_rounds": state.get("max_rounds", 5),
         }
 
     # ---------------------------------------------------------
