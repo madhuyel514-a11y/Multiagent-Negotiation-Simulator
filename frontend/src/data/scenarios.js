@@ -8,6 +8,13 @@ export const scenarios = [
     objective:
       'Fairly allocate limited emergency resources across affected districts while prioritizing life-saving operations.',
     resources: ['Food', 'Medicine', 'Rescue Boats', 'Temporary Shelters', 'Emergency Supplies'],
+    resourceQuantities: {
+      'Food': 500,
+      'Medicine': 200,
+      'Rescue Boats': 25,
+      'Temporary Shelters': 150,
+      'Emergency Supplies': 300
+    },
     challenges: [
       'Limited resources',
       'Damaged transportation routes',
@@ -62,6 +69,12 @@ export const scenarios = [
     objective:
       'Rapidly coordinate search-and-rescue and medical aid while restoring essential services.',
     resources: ['Rescue Teams', 'Medical Aid', 'Temporary Shelters', 'Debris Clearance Equipment'],
+    resourceQuantities: {
+      'Rescue Teams': 40,
+      'Medical Aid': 300,
+      'Temporary Shelters': 200,
+      'Debris Clearance Equipment': 35
+    },
     challenges: [
       'Restricted access to damaged zones',
       'Overwhelmed medical facilities',
@@ -116,6 +129,12 @@ export const scenarios = [
     objective:
       'Organize safe evacuations and restore vital services while distributing emergency supplies efficiently.',
     resources: ['Evacuation Transport', 'Food', 'Shelter Materials', 'Communication Equipment'],
+    resourceQuantities: {
+      'Evacuation Transport': 60,
+      'Food': 800,
+      'Shelter Materials': 180,
+      'Communication Equipment': 45
+    },
     challenges: [
       'Severe weather disruption',
       'Widespread infrastructure damage',

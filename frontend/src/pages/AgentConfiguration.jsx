@@ -7,6 +7,7 @@ function AgentConfiguration() {
   const [selectedScenario, setSelectedScenario] = useState(null);
   const [personalities, setPersonalities] = useState({});
   const [maxRounds, setMaxRounds] = useState(5);
+  const [resourceQuantities, setResourceQuantities] = useState({});
 
   useEffect(() => {
     const storedScenario = localStorage.getItem('selectedScenario');
@@ -19,6 +20,12 @@ function AgentConfiguration() {
         initialPersonalities[agent.id] = agent.defaultPersonality;
       });
       setPersonalities(initialPersonalities);
+
+      // Initialize resource quantities from scenario
+      const initialQuantities = parsedScenario.resourceQuantities 
+        ? { ...parsedScenario.resourceQuantities }
+        : {};
+      setResourceQuantities(initialQuantities);
     }
   }, []);
 
@@ -35,6 +42,13 @@ function AgentConfiguration() {
 
   const handlePersonalityChange = (agentId, personality) => {
     setPersonalities((prev) => ({ ...prev, [agentId]: personality }));
+  };
+
+  const handleResourceQuantityChange = (resourceName, quantity) => {
+    setResourceQuantities((prev) => ({
+      ...prev,
+      [resourceName]: Math.max(0, parseInt(quantity) || 0)
+    }));
   };
 
   const handleStartNegotiation = () => {
@@ -62,6 +76,7 @@ function AgentConfiguration() {
         personality: personalities[agent.id]
       })),
       max_rounds: maxRounds,
+      resourceQuantities: resourceQuantities
     };
 
     localStorage.setItem('negotiationConfig', JSON.stringify(negotiationConfig));
@@ -102,6 +117,25 @@ function AgentConfiguration() {
             onPersonalityChange={(personality) => handlePersonalityChange(agent.id, personality)}
           />
         ))}
+      </div>
+
+      <div className="mt-8 rounded-lg border border-blue-200 bg-blue-50 p-6">
+        <h2 className="mb-4 text-lg font-semibold text-slate-800">Available Resources & Quantities</h2>
+        <p className="mb-4 text-sm text-slate-600">Modify the available quantities for each resource before starting negotiation:</p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.entries(resourceQuantities).map(([resourceName, quantity]) => (
+            <div key={resourceName}>
+              <label className="block text-sm font-medium text-slate-700">{resourceName}</label>
+              <input
+                type="number"
+                min="0"
+                value={quantity}
+                onChange={(e) => handleResourceQuantityChange(resourceName, e.target.value)}
+                className="mt-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm w-full"
+              />
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="mt-8 grid gap-6 md:grid-cols-2">

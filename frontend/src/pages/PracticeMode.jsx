@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Send,
   Check,
@@ -106,6 +106,8 @@ function PracticeMode() {
 
   const [loading, setLoading] = useState(false);
 
+  const autoStartRef = useRef(false);
+
   // --------------------------------------------------
   // START SESSION
   // --------------------------------------------------
@@ -180,13 +182,26 @@ function PracticeMode() {
         {
           sender: 'System',
           text:
-            'Could not connect to the negotiation backend. Please start FastAPI on port 8000.',
+            `Could not start negotiation: ${error.message}`,
         },
       ]);
     } finally {
       setLoading(false);
     }
   };
+
+  // --------------------------------------------------
+  // AUTOMATIC SESSION START
+  // --------------------------------------------------
+
+  useEffect(() => {
+    if (autoStartRef.current) {
+      return;
+    }
+
+    autoStartRef.current = true;
+    startSession(initialScenario);
+  }, []);
 
   // --------------------------------------------------
   // SCENARIO CHANGE
@@ -257,13 +272,11 @@ function PracticeMode() {
             'No negotiation session is active. Please start a new negotiation.',
         },
       ]);
-
       return;
     }
 
     try {
       setLoading(true);
-
       setStatus('AI Agent is responding...');
 
       const response = await fetch(
@@ -277,90 +290,65 @@ function PracticeMode() {
             session_id: sessionId,
             message: humanMessage,
             resource: resource,
-            amount: amount
-              ? Number(amount)
-              : 0,
+            amount: amount ? Number(amount) : 0,
             action: selectedAction,
           }),
         }
       );
 
-      if (!response.ok) {
-        const errorText =
-          await response.text();
+      const responseText = await response.text();
 
+      if (!response.ok) {
         throw new Error(
-          `Practice turn failed: ${response.status} ${errorText}`
+          `Practice turn failed: ${response.status} ${responseText}`
         );
       }
 
-      const data = await response.json();
+      const data = JSON.parse(responseText);
+      const aiResponse = data?.ai_response || data?.ai || data;
 
-      // ----------------------------------------------
-      // GET AI RESPONSE
-      // ----------------------------------------------
+      console.log(
+        'PRACTICE TURN RESPONSE:',
+        data
+      );
 
-      const aiResponse =
-        data.ai_response || data.ai;
-
-      if (
-        aiResponse &&
-        aiResponse.message
-      ) {
+      if (aiResponse?.message) {
         setMessages((previous) => [
           ...previous,
           {
-            sender:
-              aiResponse.agent ||
-              'AI Agent',
+            sender: aiResponse.agent || 'AI Agent',
             text: aiResponse.message,
           },
         ]);
       }
 
-      // ----------------------------------------------
-      // ROUND
-      // ----------------------------------------------
-
-      if (aiResponse?.round) {
+      // Update round.
+      if (data?.round !== undefined && data?.round !== null) {
         setRound(
           Math.min(
-            aiResponse.round,
+            Number(data.round),
             MAX_ROUNDS
           )
         );
       }
 
-      // ----------------------------------------------
-      // NEGOTIATION STATUS
-      // ----------------------------------------------
-
-      if (
-        aiResponse?.consensus_reached === true
-      ) {
-        setSessionStatus(
-          'Agreement reached'
-        );
-
-        setStatus(
-          'Negotiation complete'
-        );
-      } else if (
-        aiResponse?.max_rounds_reached === true
-      ) {
+      // Update negotiation status.
+      if (data?.consensus_reached === true) {
+        setSessionStatus('Agreement reached');
+        setStatus('Negotiation complete');
+      } else if (data?.max_rounds_reached === true) {
         setSessionStatus('Deadlock');
-
-        setStatus(
-          'Negotiation ended'
-        );
+        setStatus('Negotiation ended');
+      } else if (data?.negotiation_ended === true) {
+        setSessionStatus('Negotiation ended');
+        setStatus('Negotiation complete');
       } else {
         setSessionStatus('Active');
-
         setStatus('Your turn');
       }
     } catch (error) {
       console.error(
-        'Practice turn error:',
+        'Negotiation turn error:',
         error
       );
 
@@ -369,7 +357,7 @@ function PracticeMode() {
         {
           sender: 'System',
           text:
-            'Could not connect to the negotiation backend.',
+            `Negotiation error: ${error.message}`,
         },
       ]);
 
@@ -379,7 +367,6 @@ function PracticeMode() {
     }
   };
 
-  // --------------------------------------------------
   // SEND BUTTON
   // --------------------------------------------------
 

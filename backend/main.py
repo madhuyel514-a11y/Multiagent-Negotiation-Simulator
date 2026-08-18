@@ -1,4 +1,12 @@
 import os
+import sys
+
+# Ensure the backend package directories are resolved before similarly named
+# project-level folders when this file is started as `python backend\main.py`.
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if BACKEND_DIR in sys.path:
+    sys.path.remove(BACKEND_DIR)
+sys.path.insert(0, BACKEND_DIR)
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
