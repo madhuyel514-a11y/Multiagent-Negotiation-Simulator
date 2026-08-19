@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 from typing import Dict, Any
 
@@ -7,7 +8,7 @@ from agents.ngo_agent import NGOAgent
 from agents.district_agent import DistrictAdministrationAgent
 
 from services.gemini_service import ask_model
-from services.evaluation_engine import calculate_consensus, detect_deadlock
+from services.evaluation_engine import calculate_consensus, detect_deadlock, generate_turn_evaluation
 
 
 class NegotiationOrchestrator:
@@ -110,12 +111,25 @@ class NegotiationOrchestrator:
             or {}
         )
 
+        # Compute total budget from resource quantities
+        total_budget = (
+            sum(resource_quantities.values())
+            if resource_quantities
+            else None
+        )
+
         state = {
             "session_id": session_id,
 
             "scenario": scenario or {},
 
             "resource_quantities": resource_quantities,
+
+            # Total pool of all resources combined — enforces zero-sum constraint
+            "total_budget": total_budget,
+
+            # Tracks last numerical proposal per agent for cross-referencing
+            "last_proposals": {},
 
             "agents": [
                 {
@@ -332,7 +346,42 @@ class NegotiationOrchestrator:
         return cleaned
 
     # =========================================================
-    # UNIQUE NEGOTIATION RESPONSE
+    # PARSE NUMERICAL PROPOSALS FROM MESSAGE
+    # =========================================================
+
+    def _parse_proposals_from_message(
+        self,
+        message: str,
+        resource_quantities: dict
+    ) -> dict:
+        """
+        Extract resource: N units patterns from a message.
+        Returns a dict like {"Rescue Teams": 25, "Medical Aid": 18, ...}
+        Only includes resources that exist in resource_quantities.
+        """
+
+        if not message or not resource_quantities:
+            return {}
+
+        result = {}
+
+        matches = re.findall(
+            r"([A-Za-z][A-Za-z0-9\s&/-]*?)\s*:\s*(\d+)\s*(?:units?)?",
+            message,
+            re.IGNORECASE
+        )
+
+        for name, qty in matches:
+            name = name.strip()
+            for resource in resource_quantities:
+                if resource.lower() == name.lower():
+                    result[resource] = int(qty)
+                    break
+
+        return result
+
+    # =========================================================
+    # UNIQUE NEGOTIATION RESPONSE (FALLBACK)
     # =========================================================
 
     def _build_unique_response(
@@ -340,201 +389,144 @@ class NegotiationOrchestrator:
         agent,
         state
     ):
+        """
+        Role-specific fallback response with DIFFERENT allocation numbers
+        per agent to create genuine conflict, not identical proposals.
+        """
 
         role = self._get_role_type(agent)
+        round_number = state.get("current_round", 1)
+        resource_quantities = state.get("resource_quantities", {})
+        last_proposals = state.get("last_proposals", {})
 
-        round_number = state.get(
-            "current_round",
-            1
+        # Priority weights per role
+        ROLE_WEIGHTS = {
+            "government": {"rescue": 0.90, "debris": 0.80, "medical": 0.50, "shelter": 0.30},
+            "ngo":        {"rescue": 0.50, "debris": 0.25, "medical": 0.95, "shelter": 0.85},
+            "district":   {"rescue": 0.75, "debris": 0.95, "medical": 0.35, "shelter": 0.55},
+        }
+
+        weights = ROLE_WEIGHTS.get(role, {})
+
+        def _get_weight(resource_name):
+            name_lower = resource_name.lower()
+            for key, w in weights.items():
+                if key in name_lower:
+                    return w
+            return 0.55
+
+        if resource_quantities:
+            message_parts = []
+            for resource, available in resource_quantities.items():
+                if available == 0:
+                    message_parts.append(f"{resource}: 0 units")
+                    continue
+                w = _get_weight(resource)
+                # Gradually concede in later rounds
+                concession = min((round_number - 1) * 0.08, 0.25)
+                quantity = max(1, int(available * max(w - concession, 0.15)))
+                message_parts.append(f"{resource}: {quantity} units")
+
+            proposal_str = "; ".join(message_parts)
+        else:
+            resources = self._get_resources(state)
+            primary = resources[(round_number - 1) % len(resources)] if resources else "resources"
+            proposal_str = f"{primary}: [see available quantities]"
+
+        # Build other-agent reference
+        other_ref_parts = []
+        other_agents = {k: v for k, v in last_proposals.items()
+                        if agent.name.lower() not in k.lower()}
+        for other_name, props in other_agents.items():
+            if isinstance(props, dict):
+                prop_str = ", ".join(f"{r}: {q}" for r, q in list(props.items())[:2])
+                other_ref_parts.append(f"{other_name} proposed {prop_str}")
+
+        other_ref = (
+            f"While I have reviewed {'; '.join(other_ref_parts[:2])}, "
+            if other_ref_parts else ""
         )
-
-        resources = self._get_resources(state)
-
-        history = state.get(
-            "history",
-            []
-        )
-
-        human_messages = [
-            item.get("message", "")
-            for item in history
-            if item.get("agent") == "Human Participant"
-        ]
-
-        last_human = (
-            human_messages[-1]
-            if human_messages
-            else ""
-        )
-
-        # Pick resources differently for each role
-        resource_count = len(resources)
-
-        if resource_count == 0:
-            resources = [
-                "Food",
-                "Medicine",
-                "Water"
-            ]
-
-        primary = resources[
-            (round_number - 1) % len(resources)
-        ]
-
-        secondary = resources[
-            (round_number) % len(resources)
-        ]
-
-        if secondary == primary and len(resources) > 1:
-            secondary = resources[
-                (round_number + 1) % len(resources)
-            ]
-
-        # -----------------------------------------------------
-        # GOVERNMENT
-        # -----------------------------------------------------
 
         if role == "government":
-
             if round_number == 1:
                 message = (
-                    f"I propose prioritizing {primary} for the most "
-                    f"affected districts while keeping a reserve of "
-                    f"{secondary} for critical emergency services."
+                    f"As the Government, our mandate is immediate public safety and rescue operations. "
+                    f"I am putting forward our opening position: {proposal_str}. "
+                    f"Rescue Teams and Debris Clearance must be prioritized — "
+                    f"without them, we cannot reach the affected population at all."
                 )
-
                 reasoning = (
-                    "Government policy prioritizes public safety, "
-                    "critical infrastructure and equitable distribution."
+                    "Government policy: Rescue Teams and Debris Clearance are the first-response "
+                    "backbone. Medical Aid is important but NGO is better positioned for that."
                 )
-
-            elif round_number == 2:
-                message = (
-                    f"Based on the earlier proposals, I can increase "
-                    f"the allocation of {primary} while reserving "
-                    f"essential {secondary} for high-risk areas."
-                )
-
-                reasoning = (
-                    "The government is adjusting its initial position "
-                    "to accommodate stakeholder concerns."
-                )
-
+                stance = "firm"
             else:
                 message = (
-                    f"I support a compromise focused on {primary}, "
-                    f"with additional {secondary} directed to districts "
-                    f"showing the greatest emergency need."
+                    f"{other_ref}I cannot accept a significant reduction in Rescue capacity. "
+                    f"My revised proposal: {proposal_str}. "
+                    f"I am making a small concession on Medical Aid to accommodate the NGO's concerns, "
+                    f"but Rescue Teams and Debris Clearance cannot drop further."
                 )
-
                 reasoning = (
-                    "A targeted compromise provides emergency coverage "
-                    "while maintaining a fair overall allocation."
+                    "The Government is offering a limited concession on Medical Aid "
+                    "while firmly defending Rescue and Debris priorities."
                 )
-
-        # -----------------------------------------------------
-        # NGO
-        # -----------------------------------------------------
+                stance = "moderate"
 
         elif role == "ngo":
-
             if round_number == 1:
                 message = (
-                    f"I recommend giving vulnerable communities priority "
-                    f"for {primary}, especially children, elderly people "
-                    f"and families in severely affected areas."
+                    f"The NGO's position is non-negotiable on Medical Aid — "
+                    f"we have hundreds of injured civilians and no medical infrastructure. "
+                    f"Our opening offer: {proposal_str}. "
+                    f"I urge the Government and District to recognize that without adequate "
+                    f"Medical Aid, lives will be lost before rescue teams even arrive."
                 )
-
                 reasoning = (
-                    "Humanitarian priorities require protecting vulnerable "
-                    "groups and communities with urgent needs."
+                    "Humanitarian principle: the most vulnerable — injured, elderly, children — "
+                    "must receive Medical Aid and Shelters as a top priority."
                 )
-
-            elif round_number == 2:
-                message = (
-                    f"I can support the government proposal if more "
-                    f"{primary} is assigned to vulnerable communities "
-                    f"and some {secondary} is kept for medical emergencies."
-                )
-
-                reasoning = (
-                    "The NGO position is moving toward compromise while "
-                    "protecting the most vulnerable groups."
-                )
-
+                stance = "firm"
             else:
                 message = (
-                    f"I accept a balanced allocation provided that "
-                    f"{primary} reaches the highest-need communities "
-                    f"before lower-priority areas."
+                    f"{other_ref}reducing Medical Aid any further is not acceptable. "
+                    f"My counter-proposal: {proposal_str}. "
+                    f"I am willing to concede on Debris Clearance since the District "
+                    f"can manage that, but Medical Aid must increase significantly."
                 )
-
                 reasoning = (
-                    "A need-based compromise can satisfy humanitarian "
-                    "requirements while allowing other stakeholders to proceed."
+                    "The NGO is offering Debris Clearance concessions in exchange for "
+                    "a meaningful increase in Medical Aid allocation."
                 )
+                stance = "strategic"
 
-        # -----------------------------------------------------
-        # DISTRICT ADMINISTRATION
-        # -----------------------------------------------------
-
-        else:
-
+        else:  # district
             if round_number == 1:
                 message = (
-                    f"From the district perspective, I recommend sending "
-                    f"{primary} to locations with the highest immediate "
-                    f"operational demand and reserving {secondary} locally."
+                    f"The District Administration's non-negotiable: Debris Clearance first. "
+                    f"Our opening position: {proposal_str}. "
+                    f"I must insist — without cleared roads, rescue teams cannot move, "
+                    f"medical aid cannot be delivered, and shelters cannot be supplied. "
+                    f"Debris Clearance is the operational prerequisite for everything else."
                 )
-
                 reasoning = (
-                    "District authorities understand local infrastructure, "
-                    "delivery constraints and immediate operational demand."
+                    "Local infrastructure reality: Debris Clearance is the prerequisite "
+                    "for all other resource deliveries. Without it, no other allocation matters."
                 )
-
-            elif round_number == 2:
-                message = (
-                    f"I propose reallocating part of the {primary} supply "
-                    f"toward districts with the greatest shortages while "
-                    f"maintaining a reserve of {secondary}."
-                )
-
-                reasoning = (
-                    "Local shortages require flexible allocation based "
-                    "on real district-level conditions."
-                )
-
+                stance = "firm"
             else:
                 message = (
-                    f"I support the emerging agreement and recommend a final "
-                    f"allocation that sends {primary} to the most affected "
-                    f"districts while preserving essential {secondary}."
+                    f"{other_ref}I understand the NGO's medical concerns and the Government's "
+                    f"rescue priorities, but Debris Clearance cannot drop below operational levels. "
+                    f"My revised proposal: {proposal_str}. "
+                    f"I am reducing my Rescue Team request to give Government more flexibility, "
+                    f"but Debris Clearance must stay high."
                 )
-
                 reasoning = (
-                    "The district administration supports a practical "
-                    "agreement that can be implemented immediately."
+                    "The District is conceding some Rescue Teams while defending "
+                    "Debris Clearance as the critical operational requirement."
                 )
-
-        # Mention the human proposal when appropriate
-        if last_human:
-            lower_human = last_human.lower()
-
-            if (
-                "offer" in lower_human
-                or "propose" in lower_human
-                or "counter" in lower_human
-            ):
-                message += (
-                    " I have considered the human participant's latest "
-                    "proposal in this position."
-                )
-
-        stance = {
-            "government": "moderate",
-            "ngo": "cooperative",
-            "district": "strategic"
-        }.get(role, "moderate")
+                stance = "strategic"
 
         return {
             "message": message,
@@ -574,7 +566,8 @@ class NegotiationOrchestrator:
             "i propose a balanced allocation",
             "i propose a fair allocation",
             "balanced need-based allocation",
-            "while keeping resources fairly distributed"
+            "while keeping resources fairly distributed",
+            "i appreciate the previous proposal and am adjusting",
         ]
 
         generic_count = sum(
@@ -650,6 +643,9 @@ class NegotiationOrchestrator:
             "current_round": state["current_round"],
             "max_rounds": state["max_rounds"],
             "resource_quantities": state.get("resource_quantities", {}),
+            # Pass budget and cross-agent proposals for realistic conflict
+            "total_budget": state.get("total_budget"),
+            "last_proposals": state.get("last_proposals", {}),
 
             "agent": {
                 "id": agent.id,
@@ -702,8 +698,7 @@ class NegotiationOrchestrator:
         ).strip()
 
         # -----------------------------------------------------
-        # IMPORTANT:
-        # Replace repeated/generic responses with a unique,
+        # Replace repeated/generic responses with unique,
         # role-specific negotiation response.
         # -----------------------------------------------------
 
@@ -732,6 +727,38 @@ class NegotiationOrchestrator:
             stance = unique_result["stance"]
 
         # -----------------------------------------------------
+        # PARSE AND SAVE NUMERICAL PROPOSALS
+        # Track what each agent last proposed for cross-referencing
+        # -----------------------------------------------------
+
+        parsed_proposal = self._parse_proposals_from_message(
+            message,
+            state.get("resource_quantities", {})
+        )
+
+        if parsed_proposal:
+            state["last_proposals"][agent.name] = parsed_proposal
+            print(f"Parsed proposal from {agent.name}: {parsed_proposal}")
+
+        # -----------------------------------------------------
+        # GENERATE TURN EVALUATION
+        # -----------------------------------------------------
+        
+        incoming_proposal = {}
+        for item in reversed(state["history"]):
+            if item.get("agent") != agent.name and item.get("parsed_proposal"):
+                incoming_proposal = item["parsed_proposal"]
+                break
+
+        evaluation = generate_turn_evaluation(
+            agent_name=agent.name,
+            new_proposal=parsed_proposal,
+            incoming_proposal=incoming_proposal,
+            current_round=state["current_round"],
+            max_rounds=state["max_rounds"]
+        )
+
+        # -----------------------------------------------------
         # SAVE AI MESSAGE
         # -----------------------------------------------------
 
@@ -741,7 +768,9 @@ class NegotiationOrchestrator:
                 "message": message,
                 "reasoning": reasoning,
                 "stance": stance,
-                "round": state["current_round"]
+                "round": state["current_round"],
+                "parsed_proposal": parsed_proposal,
+                "evaluation": evaluation
             }
         )
 
@@ -771,18 +800,21 @@ class NegotiationOrchestrator:
             except Exception:
                 state["consensus"] = 0.0
 
-            # Do not finish immediately in round 1.
             # A real negotiation should have at least
-            # two rounds of interaction.
+            # two rounds before consensus can be reached.
 
             if (
                 state["current_round"] >= 2
-                and state["consensus"] >= 0.95
+                and state["consensus"] >= 0.88
             ):
 
                 state["consensus_reached"] = True
                 state["negotiation_ended"] = True
                 state["status"] = "consensus_reached"
+                
+                if state["history"]:
+                    state["history"][-1]["evaluation"]["is_accepted"] = True
+                    state["history"][-1]["evaluation"]["satisfaction"] = 100.0
 
             elif detect_deadlock(state):
 

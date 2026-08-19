@@ -14,10 +14,31 @@ except ImportError:
     genai = None
     types = None
 
-API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
+import itertools
 
-_client = genai.Client(api_key=API_KEY) if genai and API_KEY else None
+API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+API_KEYS_STR = os.getenv("GEMINI_API_KEYS", "").strip()
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+
+_clients = []
+
+keys = []
+if API_KEYS_STR:
+    keys = [k.strip() for k in API_KEYS_STR.split(",") if k.strip()]
+elif API_KEY:
+    keys = [API_KEY.strip()]
+
+for key in keys:
+    if genai and key:
+        try:
+            _clients.append(genai.Client(api_key=key))
+        except Exception as exc:
+            print(f"Gemini initialization failed for key {key[:4]}...:", exc)
+
+_client_cycle = itertools.cycle(_clients) if _clients else None
+
+def get_client():
+    return next(_client_cycle) if _client_cycle else None
 
 
 def _fallback_response() -> str:
@@ -35,7 +56,8 @@ def generate_response(prompt: str) -> str:
     If Gemini is unavailable, return a valid deterministic JSON proposal so
     the integrated simulation remains usable for demonstrations.
     """
-    if _client is None:
+    client = get_client()
+    if client is None:
         print("GEMINI_API_KEY is not available. Using deterministic fallback.")
         return _fallback_response()
 
@@ -52,7 +74,7 @@ def generate_response(prompt: str) -> str:
                     max_output_tokens=800,
                 )
 
-            response = _client.models.generate_content(
+            response = client.models.generate_content(
                 model=MODEL,
                 contents=prompt,
                 config=config,

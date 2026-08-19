@@ -16,6 +16,7 @@ function NegotiationArena() {
   const [status, setStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -104,8 +105,17 @@ function NegotiationArena() {
     }
   }, [scenario, config]);
 
+  useEffect(() => {
+    if (isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
+      runTurn();
+    } else if (negotiationEnded || consensusReached) {
+      setIsAutoRunning(false);
+    }
+  }, [isAutoRunning, loading, negotiationEnded, consensusReached]);
+
   const reset = async () => {
     if (!scenario || !config) return;
+    setIsAutoRunning(false);
     setLoading(true);
     setApiError(null);
     try {
@@ -194,10 +204,17 @@ function NegotiationArena() {
           <div className="mt-4 flex gap-3">
             <button
               onClick={runTurn}
-              disabled={loading || negotiationEnded || consensusReached}
+              disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
               className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {loading ? 'Thinking...' : 'Run Next Turn'}
+              {loading && !isAutoRunning ? 'Thinking...' : 'Run Next Turn'}
+            </button>
+            <button
+              onClick={() => setIsAutoRunning(!isAutoRunning)}
+              disabled={negotiationEnded || consensusReached}
+              className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${isAutoRunning ? 'bg-red-500' : 'bg-emerald-500'}`}
+            >
+              {isAutoRunning ? 'Stop Auto Run' : 'Auto Run'}
             </button>
             <button
               onClick={reset}
@@ -220,9 +237,51 @@ function NegotiationArena() {
             {(history.length ? history : placeholders).map((item, i) => (
               <div key={`${i}-${item.agent || ''}`} className={`flex ${item.agent?.includes('NGO') ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${item.agent?.includes('NGO') ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}>
-                  <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{item.agent || 'Agent'}</p>
-                  <p className="mt-1 text-sm">{item.message}</p>
-                  {item.reasoning && <p className="mt-2 text-xs italic opacity-80">Reasoning: {item.reasoning}</p>}
+                  
+                  <div className="flex items-center gap-3 mb-2">
+                    <p className="text-xs font-bold uppercase tracking-wide opacity-90">{item.agent || 'Agent'}</p>
+                    {item.evaluation && !item.evaluation.is_accepted && item.round > 1 && (
+                      <span className="bg-amber-100/90 text-amber-800 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider shadow-sm">COUNTER</span>
+                    )}
+                    {item.evaluation && item.evaluation.is_accepted && item.round > 1 && (
+                      <span className="bg-emerald-100/90 text-emerald-800 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider shadow-sm">ACCEPT</span>
+                    )}
+                    {item.evaluation && (
+                      <span className="text-[11px] font-semibold opacity-80">Evaluation: {item.evaluation.satisfaction}%</span>
+                    )}
+                  </div>
+
+                  <p className="mt-1 text-sm leading-relaxed">{item.message}</p>
+                  
+                  {item.evaluation && (
+                    <div className="mt-4 mb-2 rounded-xl bg-slate-900/5 p-4">
+                      {item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0 && (
+                        <div className="mb-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wider mb-2 opacity-70">Proposed Allocation</p>
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(item.parsed_proposal).map(([res, val]) => (
+                              <span key={res} className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${item.agent?.includes('NGO') ? 'bg-blue-500 text-white' : 'bg-white text-slate-800'}`}>
+                                {res}: {val}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="text-xs space-y-2 opacity-90">
+                        <p><span className="font-semibold">Evaluation:</span> Satisfaction {item.evaluation.satisfaction}% is {item.evaluation.is_accepted ? 'above' : 'below'} the acceptance threshold ({item.evaluation.threshold}%) for round {item.round}/{maxRounds}. 
+                        {!item.evaluation.is_accepted && ` The agent proposes the following trade: ${item.evaluation.trade_str}.`}</p>
+                        
+                        {!item.evaluation.is_accepted && item.evaluation.adjustments && Object.keys(item.evaluation.adjustments).length > 0 && (
+                          <p><span className="font-semibold">Requested adjustment:</span> {
+                            Object.entries(item.evaluation.adjustments).map(([res, adj]) => `${res} ${adj > 0 ? '+'+adj : adj}`).join(' · ')
+                          }</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {item.reasoning && <p className="mt-3 text-xs italic opacity-80 border-t border-slate-900/10 pt-2">Reasoning: {item.reasoning}</p>}
                 </div>
               </div>
             ))}
