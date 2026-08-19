@@ -16,6 +16,28 @@ This branch introduces the following key components:
 
 ---
 
+## 🧠 Core Models
+
+### Evaluation Model
+The **Evaluation Model** monitors the ongoing negotiation to determine its health and progress. It uses the Gemini LLM to analyze the context of the entire conversation. Its primary responsibilities include:
+- **Consensus Detection:** Identifying when all agents have reached a mutual agreement on resource distribution.
+- **Deadlock Detection:** Recognizing when agents are stuck in a loop or refusing to budge on their positions.
+- **Scoring (0-100 Scale):** Assigning a quantitative score to the negotiation based on factors like speed to resolution, fairness, and adherence to constraints.
+  - **> 85:** Strong Consensus (Highly collaborative and efficient agreement).
+  - **50 - 85:** Partial Agreement (Deal reached, but with significant friction or unbalanced compromises).
+  - **< 50:** Deadlock / Failure (Agents failed to reach an agreement within the maximum rounds or walked away).
+
+### Concession Model
+The **Concession Model** tracks the behavioral dynamics of the agents during the negotiation. It monitors:
+- **Position Shifts:** How much an agent's resource demands change from their initial stance compared to their final agreed position.
+  - **High Concession (> 50% shift):** The agent significantly lowered their demands to reach a deal.
+  - **Moderate Concession (20% - 50% shift):** The agent compromised reasonably to find middle ground.
+  - **Low/No Concession (< 20% shift):** The agent remained firm on their initial demands (often seen in 'Aggressive' or 'Firm' personas).
+- **Willingness to Compromise:** Identifying which agents are making compromises to reach a deal versus those who are remaining stubborn.
+- **Analysis and Reporting:** Providing a breakdown of concession patterns after the negotiation concludes to evaluate the effectiveness of different agent personas.
+
+---
+
 ## 🔐 Environment Variables (.env)
 
 To run the evaluation module, you must provide a valid Google Gemini API key. The backend relies on this key to evaluate negotiations and generate agent responses.
