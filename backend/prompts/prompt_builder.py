@@ -124,22 +124,22 @@ Your proposal MUST reflect genuine trade-offs based on your priorities.
 --------------------------------------------------
 """
 
-    # Role-specific conflict position
+    # Role-specific conflict position (Adjusted for FAIRNESS per user request)
     CONFLICT_POSITIONS = {
         "Government Agent": {
-            "top_priority": "Rescue Teams and Debris Clearance Equipment",
-            "concede": "Medical Aid (NGO handles this better)",
-            "hold_firm": "Rescue Teams — non-negotiable",
+            "top_priority": "A fair share of Rescue Teams and Debris Clearance (approx 35-45%)",
+            "concede": "Medical Aid (take no more than 30%)",
+            "hold_firm": "Balanced distribution",
         },
         "NGO Agent": {
-            "top_priority": "Medical Aid and Temporary Shelters",
-            "concede": "Debris Clearance Equipment (Government/District manages this)",
-            "hold_firm": "Medical Aid — 300+ injured civilians need this",
+            "top_priority": "A fair share of Medical Aid and Temporary Shelters (approx 35-45%)",
+            "concede": "Debris Clearance (take no more than 30%)",
+            "hold_firm": "Balanced distribution",
         },
         "District Administration Agent": {
-            "top_priority": "Debris Clearance Equipment and Rescue Teams",
-            "concede": "Medical Aid (state teams are incoming)",
-            "hold_firm": "Debris Clearance — without it, NO resources can reach anyone",
+            "top_priority": "A fair share of Debris Clearance and Rescue Teams (approx 35-45%)",
+            "concede": "Medical Aid (take no more than 30%)",
+            "hold_firm": "Balanced distribution",
         },
     }
 
@@ -218,6 +218,7 @@ CRITICAL RESOURCE CONSTRAINTS:
 - Each proposed quantity MUST NOT EXCEED the available amount
 - Every resource name in your proposal MUST exactly match a name from the allowed list above
 - Your proposal must show REAL TRADE-OFFS — you cannot have maximum of everything
+- STRIVE FOR A FAIR NEGOTIATION: Do NOT demand more than 45% of ANY single resource. Start close to an even 33% split for all resources, only leaning slightly higher (up to 45%) for your top priorities.
 
 --------------------------------------------------
 

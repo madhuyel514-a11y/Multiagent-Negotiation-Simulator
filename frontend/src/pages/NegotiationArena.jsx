@@ -146,6 +146,20 @@ function NegotiationArena() {
 
   const resources = scenario?.resources || ['Food', 'Medicine', 'Shelter', 'Rescue Teams'];
 
+  const initialDemands = history.reduce((acc, item) => {
+    if (item.agent && item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0 && !acc[item.agent]) {
+      acc[item.agent] = item.parsed_proposal;
+    }
+    return acc;
+  }, {});
+
+  const finalAllocations = history.reduce((acc, item) => {
+    if (item.agent && item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0) {
+      acc[item.agent] = item.parsed_proposal;
+    }
+    return acc;
+  }, {});
+
   return (
     <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
       <div className="mb-8 text-center">
@@ -325,11 +339,57 @@ function NegotiationArena() {
       </div>
 
       {(consensusReached || negotiationEnded) && (
-        <div className="mt-8 rounded-2xl bg-emerald-50 p-5 text-emerald-800">
-          <div className="flex items-center gap-2 font-semibold">
-            <CheckCircle size={18} /> Negotiation finished
+        <div className="mt-8 rounded-[1.75rem] bg-emerald-50/80 p-6 sm:p-8">
+          <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl">
+            <CheckCircle size={24} /> Final Negotiation Report
           </div>
-          <p className="mt-1 text-sm">The session reached its configured stopping condition. Use Reset to run another negotiation.</p>
+          <p className="mt-2 text-sm text-emerald-700/80 mb-6 font-medium">
+            The negotiation has concluded. Below is the summary of the opening positions and the final agreed allocation.
+          </p>
+          
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div>
+              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">INITIAL REQUIREMENTS (OPENING DEMANDS)</h3>
+              <div className="space-y-4">
+                {Object.entries(initialDemands).map(([agentName, demands]) => (
+                  <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm">
+                    <p className="text-sm font-bold text-slate-800 mb-3">{agentName}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(demands).map(([res, val]) => (
+                        <span key={res} className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
+                          {res}: {val}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+              <div>
+              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">FINAL AGREED ALLOCATION</h3>
+              <div className="space-y-4">
+                {Object.keys(finalAllocations).length > 0 ? (
+                  Object.entries(finalAllocations).map(([agentName, allocation]) => (
+                    <div key={agentName} className="bg-[#009A65] text-white rounded-xl p-4 shadow-md">
+                      <p className="text-sm font-bold text-emerald-50 mb-3">{agentName}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(allocation).map(([res, val]) => (
+                          <span key={res} className="bg-[#00B47A] text-white rounded-md px-3 py-1.5 text-xs font-bold shadow-sm">
+                            {res}: {val}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-[#009A65] rounded-xl p-6 text-white shadow-md">
+                    <p className="text-sm italic text-emerald-100">No valid allocations were recorded.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

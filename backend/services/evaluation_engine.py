@@ -184,7 +184,7 @@ def negotiation_status(
 
     consensus = float(state.get("consensus", 0.0))
 
-    if consensus >= 0.88:
+    if consensus >= 0.95:
         return "consensus_reached"
 
     if state.get("current_round", 1) > max_rounds:
@@ -199,14 +199,16 @@ def negotiation_status(
 def generate_turn_evaluation(
     agent_name: str, 
     new_proposal: Dict[str, Any], 
-    incoming_proposal: Dict[str, Any], 
-    current_round: int, 
-    max_rounds: int
+    state: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Generate an evaluation metric for the current turn based on the incoming proposal vs new desired proposal.
+    Generate an evaluation metric for the current turn based on whether the new proposal fits 
+    within the remaining budget left by other agents' latest proposals.
     """
-    if not incoming_proposal or not new_proposal:
+    current_round = state.get("current_round", 1)
+    max_rounds = state.get("max_rounds", 5)
+    
+    if current_round <= 1 or not new_proposal:
         return {
             "satisfaction": 100.0,
             "threshold": 95.0,
@@ -215,39 +217,44 @@ def generate_turn_evaluation(
             "adjustments": {}
         }
     
-    min_threshold = 75.0
-    max_threshold = 95.0
-    
-    if max_rounds <= 1:
-        threshold = max_threshold
+    # In rounds 2-4, keep acceptance strict so agents actively negotiate and counter
+    # In round 5 (final round), threshold is relaxed to 85.0% to lock in the final consensus
+    if current_round < max_rounds:
+        threshold = 95.0
     else:
-        progress = (current_round - 1) / (max_rounds - 1)
-        threshold = max_threshold - (progress * (max_threshold - min_threshold))
-        
+        threshold = 85.0
+
+    resource_quantities = state.get("resource_quantities", {})
+    last_proposals = state.get("last_proposals", {})
+    
+    # Sum of demands from ALL OTHER agents
+    others_demands = {}
+    for other_name, other_prop in last_proposals.items():
+        if other_name != agent_name and isinstance(other_prop, dict):
+            for res, val in other_prop.items():
+                others_demands[res] = others_demands.get(res, 0) + val
+                
     total_resources = 0
     total_score = 0.0
     
     trades = []
     adjustments = {}
     
-    all_keys = set(new_proposal.keys()) | set(incoming_proposal.keys())
-    
-    for res in all_keys:
-        inc = incoming_proposal.get(res, 0)
-        new = new_proposal.get(res, 0)
+    for res, wanted in new_proposal.items():
+        available_total = resource_quantities.get(res, 0)
+        others_took = others_demands.get(res, 0)
+        leftover = max(0, available_total - others_took)
         
-        if inc >= new:
+        if leftover >= wanted:
             score = 1.0
-            if inc > new:
-                trades.append(f"reduce {res}")
-                adjustments[res] = new - inc
         else:
-            if new > 0:
-                score = inc / new
+            if wanted > 0:
+                score = leftover / wanted
             else:
                 score = 1.0
-            trades.append(f"increase {res}")
-            adjustments[res] = f"+{new - inc}"
+                
+            trades.append(f"decrease demand for {res}")
+            adjustments[res] = f"-{wanted - leftover}"
             
         total_score += score
         total_resources += 1
