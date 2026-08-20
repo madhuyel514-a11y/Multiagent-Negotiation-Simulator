@@ -446,6 +446,14 @@ class NegotiationOrchestrator:
 
         is_final_round = (round_number >= 5)
 
+        action = "COUNTER"
+        if is_final_round:
+            action = "ACCEPT"
+        elif round_number == 1:
+            action = "OFFER"
+        elif round_number == 2:
+            action = "REJECT"
+
         if role == "government":
             if is_final_round:
                 message = (
@@ -456,6 +464,7 @@ class NegotiationOrchestrator:
                 )
                 reasoning = "Final consensus reached: Government's core rescue and transit mandates are fully secured alongside partners' needs."
                 stance = "accept"
+                action = "ACCEPT"
             elif round_number == 1:
                 message = (
                     f"As the Government authority leading national disaster management, our top priority is rapid search and rescue and main transit clearance. "
@@ -464,14 +473,25 @@ class NegotiationOrchestrator:
                 )
                 reasoning = "Government establishing opening position prioritizing Rescue Teams and Debris Clearance."
                 stance = "firm"
+                action = "OFFER"
+            elif round_number == 2:
+                message = (
+                    f"While I acknowledge the District's local concerns and the NGO's clinical needs, I cannot accept the excessive heavy equipment claims from municipal partners. "
+                    f"Claiming high clearance capacity creates an immediate deficit on arterial highway routes. I reject this allocation and counter-propose: {proposal_str}. "
+                    f"We must maintain national highway clearing authority."
+                )
+                reasoning = "Round 2 firm pushback against disproportionate local heavy equipment claims while proposing workable limits."
+                stance = "firm"
+                action = "REJECT"
             else:
                 message = (
-                    f"I have reviewed the other proposals and am making measured concessions. "
+                    f"I have reviewed the partners' latest counter-proposals and am offering measured concessions. "
                     f"My revised counter-proposal: {proposal_str}. "
-                    f"I am reducing our secondary demands to ensure the NGO has sufficient medical aid and the District has local clearance capacity."
+                    f"I am reducing our secondary shelter and medical demands to ensure the NGO has sufficient triage supplies and the District has local clearance capacity."
                 )
-                reasoning = f"Round {round_number} strategic concession while maintaining core search and rescue priorities."
+                reasoning = f"Round {round_number} strategic trade-off while maintaining core search and rescue priorities."
                 stance = "moderate"
+                action = "COUNTER"
 
         elif role == "ngo":
             if is_final_round:
@@ -482,6 +502,7 @@ class NegotiationOrchestrator:
                 )
                 reasoning = "Final consensus reached: NGO's primary humanitarian mandate for medical aid and shelters is successfully fulfilled."
                 stance = "accept"
+                action = "ACCEPT"
             elif round_number == 1:
                 message = (
                     f"The NGO's frontline humanitarian mission focuses on immediate medical triage and temporary shelters for displaced families. "
@@ -490,6 +511,16 @@ class NegotiationOrchestrator:
                 )
                 reasoning = "NGO opening position prioritizing Medical Aid and Temporary Shelters for civilian casualties."
                 stance = "firm"
+                action = "OFFER"
+            elif round_number == 2:
+                message = (
+                    f"I cannot accept the Government's initial proposal that restricts frontline medical aid to minimal quantities when hundreds of injured civilians require urgent care. "
+                    f"Frontline trauma centers cannot operate without sufficient supplies. I reject that reduction and counter-propose: {proposal_str}, "
+                    f"conceding heavy equipment to Government and District teams in exchange for essential clinical supplies."
+                )
+                reasoning = "Round 2 firm rejection of insufficient clinical allocations with targeted counter-proposal."
+                stance = "firm"
+                action = "REJECT"
             else:
                 message = (
                     f"The NGO appreciates the movement from government and municipal authorities. "
@@ -498,6 +529,7 @@ class NegotiationOrchestrator:
                 )
                 reasoning = f"Round {round_number} constructive trade-off to converge toward joint consensus."
                 stance = "strategic"
+                action = "COUNTER"
 
         else:  # district
             if is_final_round:
@@ -508,6 +540,7 @@ class NegotiationOrchestrator:
                 )
                 reasoning = "Final consensus reached: District logistics baseline and municipal response capacity are guaranteed."
                 stance = "accept"
+                action = "ACCEPT"
             elif round_number == 1:
                 message = (
                     f"The District Administration's priority is clearing local road networks and coordinating municipal relief operations. "
@@ -516,19 +549,31 @@ class NegotiationOrchestrator:
                 )
                 reasoning = "District opening position defending Debris Clearance as the operational foundation."
                 stance = "firm"
+                action = "OFFER"
+            elif round_number == 2:
+                message = (
+                    f"I acknowledge the Government's national rescue command and the NGO's clinical priorities, but we cannot accept being left without local route clearing machinery. "
+                    f"To bridge the gap between arterial highways and neighborhood triage sites, I counter-propose: {proposal_str}, "
+                    f"offering concessions on temporary shelters and medical aid to maintain local access."
+                )
+                reasoning = "Round 2 municipal adjustment defending local feeder road clearance with constructive trade-offs."
+                stance = "strategic"
+                action = "COUNTER"
             else:
                 message = (
-                    f"I acknowledge the Government's national rescue command and the NGO's clinical priorities. "
+                    f"I acknowledge the constructive concessions from both the Government and NGO. "
                     f"My revised proposal for Round {round_number}: {proposal_str}. "
                     f"We are refining our local allocations to ensure all three agencies reach an equitable, workable solution."
                 )
                 reasoning = f"Round {round_number} municipal adjustment balancing clearance with partner needs."
                 stance = "strategic"
+                action = "COUNTER"
 
         return {
             "message": message,
             "reasoning": reasoning,
-            "stance": stance
+            "stance": stance,
+            "action": action
         }
 
     # =========================================================
@@ -737,6 +782,8 @@ class NegotiationOrchestrator:
             state["last_proposals"][agent.name] = parsed_proposal
             print(f"Parsed proposal from {agent.name}: {parsed_proposal}")
 
+        raw_action = str(result.get("action", "")).strip()
+
         # -----------------------------------------------------
         # GENERATE TURN EVALUATION
         # -----------------------------------------------------
@@ -744,7 +791,10 @@ class NegotiationOrchestrator:
         evaluation = generate_turn_evaluation(
             agent_name=agent.name,
             new_proposal=parsed_proposal,
-            state=state
+            state=state,
+            message=message,
+            stance=stance,
+            raw_action=raw_action
         )
 
         # -----------------------------------------------------
@@ -757,6 +807,7 @@ class NegotiationOrchestrator:
                 "message": message,
                 "reasoning": reasoning,
                 "stance": stance,
+                "action": evaluation.get("action", "COUNTER"),
                 "round": state["current_round"],
                 "parsed_proposal": parsed_proposal,
                 "evaluation": evaluation
