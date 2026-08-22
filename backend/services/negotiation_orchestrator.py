@@ -76,6 +76,15 @@ class NegotiationOrchestrator:
                     personality
                 )
 
+            if cfg.get("goal"):
+                agent.primary_goal = str(cfg["goal"])
+            if cfg.get("constraints"):
+                agent.constraints = list(cfg["constraints"])
+            agent.priorities = (
+                cfg.get("priorities")
+                or cfg.get("priority")
+                or []
+            )
             agents.append(agent)
 
         # Safety fallback
@@ -131,12 +140,25 @@ class NegotiationOrchestrator:
             # Tracks last numerical proposal per agent for cross-referencing
             "last_proposals": {},
 
+            # The proposal currently being evaluated by the agents.
+            "current_proposal": {},
+
+            # Agent name -> exact proposal accepted by that agent.
+            "accepted_proposals": {},
+
+            "final_allocation": None,
+
+            "final_report": None,
+
             "agents": [
                 {
                     "id": agent.id,
                     "name": agent.name,
                     "role": agent.role,
-                    "personality": agent.personality
+                    "personality": agent.personality,
+                    "goal": agent.primary_goal,
+                    "constraints": agent.constraints,
+                    "priorities": getattr(agent, "priorities", [])
                 }
                 for agent in agents
             ],
@@ -352,7 +374,8 @@ class NegotiationOrchestrator:
     def _parse_proposals_from_message(
         self,
         message: str,
-        resource_quantities: dict
+        resource_quantities: dict,
+        agent_names: list = None
     ) -> dict:
         """
         Extract resource: N units patterns from a message.
@@ -364,6 +387,73 @@ class NegotiationOrchestrator:
             return {}
 
         result = {}
+        configured_agents = agent_names or [
+            "Government Agent",
+            "NGO Agent",
+            "District Administration Agent",
+        ]
+
+        sections = {}
+        current_agent = None
+        detailed_section_found = False
+        for line in str(message).splitlines():
+            header = line.strip().lstrip("#-* ").rstrip(":").strip()
+            matched_agent = next(
+                (
+                    name for name in configured_agents
+                    if re.match(
+                        rf"^{re.escape(name)}(?:'s)?\s+allocation$|^{re.escape(name)}$",
+                        header,
+                        re.IGNORECASE,
+                    )
+                ),
+                None,
+            )
+            if matched_agent:
+                current_agent = matched_agent
+                detailed_section_found = True
+                sections.setdefault(current_agent, {})
+                continue
+            if current_agent and re.search(
+                r"total\s+(resource\s+distribution|allocation)",
+                header,
+                re.IGNORECASE,
+            ):
+                current_agent = None
+                continue
+            if current_agent:
+                match = re.match(
+                    r"^[-*]?\s*([^:]+?)\s*:\s*(\d+)\s*(?:units?)?\s*$",
+                    line,
+                    re.IGNORECASE,
+                )
+                if match:
+                    name, qty = match.groups()
+                    for resource in resource_quantities:
+                        if resource.lower() == name.strip().lower():
+                            sections[current_agent][resource] = int(qty)
+                            break
+
+        if len(sections) == len(configured_agents) and all(
+            sections.get(name) for name in configured_agents
+        ):
+            complete = all(
+                all(resource in sections[name] for resource in resource_quantities)
+                for name in configured_agents
+            )
+            values_valid = all(
+                0 <= sections[name].get(resource, -1) <= available
+                for name in configured_agents
+                for resource, available in resource_quantities.items()
+            )
+            totals_valid = all(
+                sum(sections[name].get(resource, 0) for name in configured_agents) == available
+                for resource, available in resource_quantities.items()
+            )
+            return sections if complete and values_valid and totals_valid else {}
+
+        if detailed_section_found:
+            return {}
 
         matches = re.findall(
             r"([A-Za-z][A-Za-z0-9\s&/-]*?)\s*:\s*(\d+)\s*(?:units?)?",
@@ -662,7 +752,11 @@ class NegotiationOrchestrator:
 
             state["max_rounds_reached"] = True
             state["negotiation_ended"] = True
-            state["status"] = "max_rounds_reached"
+            state["consensus_reached"] = False
+            state["status"] = "deadlock_no_consensus"
+            state["final_allocation"] = None
+            state["final_report"] = self._build_final_report(state)
+            print("[TERMINATION] reason=deadlock/max_rounds")
 
             return self._build_response(
                 state,
@@ -688,6 +782,8 @@ class NegotiationOrchestrator:
             # Pass budget and cross-agent proposals for realistic conflict
             "total_budget": state.get("total_budget"),
             "last_proposals": state.get("last_proposals", {}),
+            "current_proposal": state.get("current_proposal", {}),
+            "agents": state.get("agents", []),
 
             "agent": {
                 "id": agent.id,
@@ -695,7 +791,10 @@ class NegotiationOrchestrator:
                 "role": agent.role,
                 "personality": agent.personality,
                 "goal": agent.primary_goal,
-                "constraints": agent.constraints
+                "constraints": agent.constraints,
+                "priorities": getattr(agent, "priorities", []),
+                "current_proposal": state.get("current_proposal", {}),
+                "current_round": state.get("current_round", 1)
             }
         }
 
@@ -738,6 +837,7 @@ class NegotiationOrchestrator:
                 "moderate"
             )
         ).strip()
+        raw_action = str(result.get("action", "")).strip()
 
         # -----------------------------------------------------
         # Replace repeated/generic responses with unique,
@@ -756,6 +856,7 @@ class NegotiationOrchestrator:
             message = unique_result["message"]
             reasoning = unique_result["reasoning"]
             stance = unique_result["stance"]
+            raw_action = unique_result.get("action", "")
 
         # Safety fallback
         if not message:
@@ -767,26 +868,30 @@ class NegotiationOrchestrator:
             message = unique_result["message"]
             reasoning = unique_result["reasoning"]
             stance = unique_result["stance"]
+            raw_action = unique_result.get("action", "")
 
         # -----------------------------------------------------
         # PARSE AND SAVE NUMERICAL PROPOSALS
         # Track what each agent last proposed for cross-referencing
         # -----------------------------------------------------
 
+        incoming_proposal = state.get("current_proposal", {})
+
         parsed_proposal = self._parse_proposals_from_message(
             message,
-            state.get("resource_quantities", {})
+            state.get("resource_quantities", {}),
+            [item.name for item in agents],
         )
 
-        if parsed_proposal:
-            state["last_proposals"][agent.name] = parsed_proposal
-            print(f"Parsed proposal from {agent.name}: {parsed_proposal}")
-
-        raw_action = str(result.get("action", "")).strip()
+        llm_message = message
 
         # -----------------------------------------------------
         # GENERATE TURN EVALUATION
         # -----------------------------------------------------
+
+        print(f"[ROUND] round={state['current_round']}/{state['max_rounds']} agent={agent.name}")
+        print(f"[PROPOSAL] incoming={incoming_proposal}")
+        print(f"[CONSENSUS] current_proposal_before={state.get('current_proposal', {})}")
         
         evaluation = generate_turn_evaluation(
             agent_name=agent.name,
@@ -794,7 +899,42 @@ class NegotiationOrchestrator:
             state=state,
             message=message,
             stance=stance,
-            raw_action=raw_action
+            raw_action=raw_action,
+            incoming_proposal=incoming_proposal
+        )
+
+        action = evaluation.get("action", "COUNTER")
+        print(f"[DECISION] raw_llm_action={raw_action.upper() or 'NONE'}")
+        print(f"[DECISION] final_action={action} satisfaction={evaluation.get('satisfaction')}")
+        generated_proposal = (
+            dict(parsed_proposal)
+            if action in ("OFFER", "COUNTER")
+            else {}
+        )
+
+        if action in ("OFFER", "COUNTER") and generated_proposal:
+            state["last_proposals"][agent.name] = generated_proposal
+            print(f"Parsed proposal from {agent.name}: {generated_proposal}")
+            state["current_proposal"] = dict(generated_proposal)
+            state["accepted_proposals"] = {}
+            print(f"[PROPOSAL] counter={generated_proposal}")
+            print(f"[PROPOSAL] full_allocation={state['current_proposal']}")
+        elif action == "ACCEPT" and state.get("current_proposal"):
+            state["accepted_proposals"][agent.name] = dict(
+                state["current_proposal"]
+            )
+
+            print(f"[PROPOSAL] counter={{}}")
+
+        print(f"[CONSENSUS] current_proposal_after={state.get('current_proposal', {})}")
+        print(f"[PROPOSAL] full_allocation={state.get('current_proposal', {})}")
+        print(f"[CONSENSUS] accepted_agents={list(state.get('accepted_proposals', {}))}")
+
+        message = self._normalize_decision_message(
+            action,
+            incoming_proposal,
+            generated_proposal,
+            reasoning,
         )
 
         # -----------------------------------------------------
@@ -807,9 +947,12 @@ class NegotiationOrchestrator:
                 "message": message,
                 "reasoning": reasoning,
                 "stance": stance,
-                "action": evaluation.get("action", "COUNTER"),
+                "action": action,
                 "round": state["current_round"],
-                "parsed_proposal": parsed_proposal,
+                "incoming_proposal": dict(incoming_proposal),
+                "parsed_proposal": generated_proposal,
+                "llm_action": raw_action.upper() if raw_action else "",
+                "llm_message": llm_message,
                 "evaluation": evaluation
             }
         )
@@ -819,6 +962,37 @@ class NegotiationOrchestrator:
         # -----------------------------------------------------
 
         state["current_agent_idx"] += 1
+
+        agent_names = [item.name for item in agents]
+        accepted_proposals = state.get("accepted_proposals", {})
+        current_proposal = state.get("current_proposal", {})
+        unanimous_acceptance = (
+            bool(current_proposal)
+            and len(accepted_proposals) == len(agent_names)
+            and all(
+                accepted_proposals.get(name) == current_proposal
+                for name in agent_names
+            )
+        )
+        print(f"[CONSENSUS] unanimous={unanimous_acceptance}")
+
+        if unanimous_acceptance:
+            state["consensus"] = 1.0
+            state["consensus_reached"] = True
+            state["negotiation_ended"] = True
+            state["final_allocation"] = dict(current_proposal)
+            state["status"] = "agreement_reached"
+            state["final_report"] = self._build_final_report(state)
+            print(f"[CONSENSUS] final_allocation={state['final_allocation']}")
+            print("[TERMINATION] reason=consensus")
+
+            return self._build_response(
+                state,
+                agent,
+                message,
+                reasoning,
+                stance
+            )
 
         round_finished = (
             state["current_agent_idx"]
@@ -840,21 +1014,16 @@ class NegotiationOrchestrator:
             except Exception:
                 state["consensus"] = 0.0
 
-            # Check if all agents in the completed round accepted their allocations
-            recent_turn_count = len(agents)
-            recent_history = state.get("history", [])[-recent_turn_count:]
-            all_agents_accepted = (
-                len(recent_history) == recent_turn_count
-                and all(item.get("evaluation", {}).get("is_accepted", False) for item in recent_history)
-            )
-
-            # The negotiation MUST proceed through all rounds (e.g. 5 rounds) and only conclude in the final round
             is_final_round = (state["current_round"] >= state["max_rounds"])
 
             if is_final_round:
-                state["consensus_reached"] = True
+                state["max_rounds_reached"] = True
                 state["negotiation_ended"] = True
-                state["status"] = "consensus_reached"
+                state["consensus_reached"] = False
+                state["status"] = "deadlock_no_consensus"
+                state["final_allocation"] = None
+                state["final_report"] = self._build_final_report(state)
+                print("[TERMINATION] reason=deadlock/max_rounds")
             else:
                 state["current_round"] += 1
                 state["status"] = "ongoing"
@@ -889,6 +1058,72 @@ class NegotiationOrchestrator:
     # =========================================================
     # RESPONSE
     # =========================================================
+
+    @staticmethod
+    def _format_proposal(proposal):
+        if proposal and all(isinstance(value, dict) for value in proposal.values()):
+            return "\n".join(
+                f"{agent_name}: "
+                + "; ".join(
+                    f"{resource}: {quantity} units"
+                    for resource, quantity in resources.items()
+                )
+                for agent_name, resources in proposal.items()
+            )
+        return "; ".join(
+            f"{resource}: {quantity} units"
+            for resource, quantity in proposal.items()
+        )
+
+    def _normalize_decision_message(
+        self,
+        action,
+        incoming_proposal,
+        generated_proposal,
+        reasoning,
+    ):
+        if action == "ACCEPT":
+            proposal_text = self._format_proposal(incoming_proposal)
+            return f"I accept the incoming proposal: {proposal_text}."
+
+        if action == "COUNTER":
+            proposal_text = self._format_proposal(generated_proposal)
+            if proposal_text:
+                return f"I counter-propose: {proposal_text}."
+            return "I counter the incoming proposal, but no valid counterproposal was generated."
+
+        if action == "REJECT":
+            return "I reject the incoming proposal based on my objectives and constraints."
+
+        proposal_text = self._format_proposal(generated_proposal)
+        return f"I make the following opening offer: {proposal_text}."
+
+    def _build_final_report(self, state):
+        if state.get("consensus_reached"):
+            allocation = state.get("final_allocation") or {}
+            lines = ["FINAL AGREED ALLOCATION"]
+            if allocation and all(isinstance(value, dict) for value in allocation.values()):
+                totals = {}
+                for agent_name, resources in allocation.items():
+                    lines.append(f"\n{agent_name}:")
+                    for resource, quantity in resources.items():
+                        lines.append(f"{resource}: {quantity}")
+                        totals[resource] = totals.get(resource, 0) + quantity
+                lines.append("\nTOTAL:")
+                lines.extend(f"{resource}: {quantity}" for resource, quantity in totals.items())
+            return {
+                "status": "agreement_reached",
+                "consensus_reached": True,
+                "final_allocation": state.get("final_allocation"),
+                "message": "All agents accepted the same final allocation.\n" + "\n".join(lines)
+            }
+
+        return {
+            "status": "deadlock_no_consensus",
+            "consensus_reached": False,
+            "final_allocation": None,
+            "message": "NO AGREEMENT REACHED\nMaximum negotiation rounds were reached without unanimous acceptance."
+        }
 
     def _build_response(
         self,
@@ -975,6 +1210,12 @@ class NegotiationOrchestrator:
             ),
 
             "next_agent": next_agent,
+
+            "current_proposal": state.get("current_proposal", {}),
+
+            "final_allocation": state.get("final_allocation"),
+
+            "final_report": state.get("final_report"),
 
             "history": state.get(
                 "history",

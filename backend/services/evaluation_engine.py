@@ -78,7 +78,7 @@ def calculate_consensus(state: Dict[str, Any]) -> float:
         # Initial exploration
         return 0.25
 
-    if current_round >= max_rounds or state.get("consensus_reached"):
+    if state.get("consensus_reached"):
         return 1.0
 
     # Base consensus progression by round
@@ -103,7 +103,16 @@ def calculate_consensus(state: Dict[str, Any]) -> float:
             resource_agreements = []
             for resource in all_resources:
                 available = resource_quantities.get(resource, 0)
-                total_requested = sum(p.get(resource, 0) for p in proposals)
+                total_requested = sum(
+                    p.get(resource, 0)
+                    if resource in p
+                    else sum(
+                        allocation.get(resource, 0)
+                        for allocation in p.values()
+                        if isinstance(allocation, dict)
+                    )
+                    for p in proposals
+                )
                 if total_requested <= available:
                     resource_agreements.append(1.0)
                 else:
@@ -114,7 +123,7 @@ def calculate_consensus(state: Dict[str, Any]) -> float:
             blended = (round_progress * 0.7) + (fit_score * 0.3)
             return round(min(max(blended, 0.2), 0.95), 2)
 
-    return round(round_progress, 2)
+    return round(min(round_progress, 0.94), 2)
 
 
 def detect_deadlock(
@@ -177,7 +186,7 @@ def negotiation_status(
 ) -> str:
     consensus = float(state.get("consensus", 0.0))
 
-    if consensus >= 0.95:
+    if state.get("consensus_reached"):
         return "consensus_reached"
 
     if state.get("current_round", 1) > max_rounds:
@@ -189,87 +198,192 @@ def negotiation_status(
     return "ongoing"
 
 
+def _text_tokens(value: Any) -> set:
+    if isinstance(value, (list, tuple, set)):
+        value = " ".join(str(item) for item in value)
+    return _normalise(str(value or ""))
+
+
+def _resource_priority(resource: str, agent: Dict[str, Any], scenario: Any) -> float:
+    """Return a preference weight derived from the agent and scenario text."""
+    resource_tokens = _text_tokens(resource)
+    preference_text = " ".join(
+        str(agent.get(field, ""))
+        for field in ("goal", "primary_goal", "priority", "priorities", "role")
+    )
+    preference_tokens = _text_tokens(preference_text)
+    scenario_tokens = _text_tokens(scenario)
+
+    # Role-specific priorities are a fallback for the built-in agents. Explicit
+    # goals and priorities still win because their matching weight is higher.
+    role = str(agent.get("role", "")).lower()
+    role_priorities = {
+        "government": ("rescue", "safety", "infrastructure", "debris"),
+        "ngo": ("medical", "shelter", "food", "water", "vulnerable"),
+        "district": ("debris", "clearance", "rescue", "infrastructure", "access"),
+    }
+    role_terms = next(
+        (terms for name, terms in role_priorities.items() if name in role),
+        (),
+    )
+
+    explicit_match = bool(resource_tokens & preference_tokens)
+    role_match = any(term in resource.lower() for term in role_terms)
+    scenario_match = bool(resource_tokens & scenario_tokens)
+
+    if explicit_match:
+        return 1.0
+    if role_match:
+        return 0.85
+    if scenario_match:
+        return 0.65
+    return 0.4
+
+
+def _incoming_proposal(
+    agent_name: str,
+    state: Dict[str, Any],
+    explicit_proposal: Any,
+) -> Dict[str, Any]:
+    if isinstance(explicit_proposal, dict):
+        return explicit_proposal
+
+    history = state.get("history", [])
+    for entry in reversed(history):
+        if entry.get("agent") != agent_name and isinstance(entry.get("parsed_proposal"), dict):
+            return entry["parsed_proposal"]
+
+    last_proposals = state.get("last_proposals", {})
+    for name, proposal in reversed(list(last_proposals.items())):
+        if name != agent_name and isinstance(proposal, dict):
+            return proposal
+    return {}
+
+
 def generate_turn_evaluation(
     agent_name: str, 
     new_proposal: Dict[str, Any], 
     state: Dict[str, Any],
     message: str = "",
     stance: str = "",
-    raw_action: str = ""
+    raw_action: str = "",
+    incoming_proposal: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
-    """
-    Generate an evaluation metric for the current turn, detecting whether the action 
-    is OFFER, REJECT, COUNTER, or ACCEPT.
-    """
-    current_round = state.get("current_round", 1)
-    max_rounds = state.get("max_rounds", 5)
-    msg_lower = (message or "").lower()
-    
-    # 1. Determine Negotiation Action (OFFER, REJECT, COUNTER, ACCEPT)
-    if current_round >= max_rounds or "final agreed allocation" in msg_lower or "achieved full consensus" in msg_lower:
-        action = "ACCEPT"
-    elif current_round == 1:
-        action = "OFFER"
-    else:
-        # Check explicit action from agent response or message cues
-        if raw_action and raw_action.upper() in ["REJECT", "COUNTER", "ACCEPT", "OFFER"]:
-            action = raw_action.upper()
-        elif any(w in msg_lower for w in ["cannot accept", "unacceptable", "reject", "over-allocation", "deficit", "object", "disagree", "excessive", "refuse"]):
-            action = "REJECT"
-        elif any(w in msg_lower for w in ["counter-propose", "counter-proposal", "counter proposal", "concede", "adjust", "trade", "in exchange", "compromise"]):
-            action = "COUNTER"
-        elif "accept" in msg_lower and current_round >= 4:
-            action = "ACCEPT"
-        else:
-            action = "COUNTER" if current_round >= 2 else "OFFER"
+    """Evaluate the latest other-agent proposal against this agent's objectives."""
+    agent = next(
+        (item for item in state.get("agents", []) if item.get("name") == agent_name),
+        {"name": agent_name},
+    )
+    resource_quantities = state.get("resource_quantities", {}) or {}
+    proposal = _incoming_proposal(agent_name, state, incoming_proposal)
+    known_resources = set(resource_quantities)
 
-    # 2. Compute Realistic Satisfaction & Threshold
-    if action == "ACCEPT":
-        satisfaction = 100.0
-        threshold = 85.0
-        is_accepted = True
-    elif action == "OFFER":
-        satisfaction = 45.0
-        threshold = 95.0
-        is_accepted = False
-    elif action == "REJECT":
-        satisfaction = 58.0 if current_round == 2 else 64.0
-        threshold = 90.0
-        is_accepted = False
-    else: # COUNTER
-        satisfaction = 68.0 if current_round == 2 else (78.0 if current_round == 3 else 88.0)
-        threshold = 90.0
-        is_accepted = False
+    # Detailed proposals contain one allocation per configured agent. Evaluate
+    # only the current agent's allocation while consensus compares the whole map.
+    agent_allocation = proposal.get(agent_name, proposal) if isinstance(proposal, dict) else {}
+    if not isinstance(agent_allocation, dict):
+        agent_allocation = {}
 
-    # 3. Generate suggested trades / adjustments if rejecting or countering
-    trades = []
+    invalid = any(
+        resource not in known_resources
+        or not isinstance(quantity, (int, float))
+        or quantity < 0
+        or quantity > resource_quantities.get(resource, 0)
+        for resource, quantity in agent_allocation.items()
+    )
+
+    if not proposal:
+        # There is no incoming offer on an agent's opening turn to evaluate.
+        return {
+            "action": "OFFER",
+            "satisfaction": 0.0,
+            "threshold": 70.0,
+            "is_accepted": False,
+            "trade_str": "Await an incoming proposal before evaluating acceptance",
+            "adjustments": {},
+        }
+
+    agent_count = max(len(state.get("agents", [])), 1)
+    weighted_score = 0.0
+    total_weight = 0.0
     adjustments = {}
-    resource_quantities = state.get("resource_quantities", {})
-    last_proposals = state.get("last_proposals", {})
+    trades = []
 
-    if action in ["REJECT", "COUNTER"] and new_proposal:
-        others_demands = {}
-        for other_name, other_prop in last_proposals.items():
-            if other_name != agent_name and isinstance(other_prop, dict):
-                for res, val in other_prop.items():
-                    others_demands[res] = others_demands.get(res, 0) + val
+    for resource, available in resource_quantities.items():
+        priority = _resource_priority(resource, agent, state.get("scenario", {}))
+        weight = 0.5 + priority
+        desired_share = min(0.45, max(0.15, priority / agent_count))
+        desired_quantity = available * desired_share
+        received = max(0.0, float(agent_allocation.get(resource, 0)))
+        fulfillment = min(received / desired_quantity, 1.0) if desired_quantity else 1.0
+        weighted_score += fulfillment * weight
+        total_weight += weight
 
-        for res, wanted in new_proposal.items():
-            avail = resource_quantities.get(res, 0)
-            took = others_demands.get(res, 0)
-            leftover = max(0, avail - took)
-            if wanted > leftover and avail > 0:
-                diff = wanted - leftover
-                trades.append(f"decrease demand for {res} by {diff} units")
-                adjustments[res] = f"-{diff}"
+        gap = max(0, int(round(desired_quantity - received)))
+        if gap and priority < 0.85:
+            adjustments[resource] = f"+{min(gap, max(0, available - received))}"
+            trades.append(f"increase {resource} by {min(gap, max(0, available - received))} units")
+        elif received > desired_quantity and priority < 0.85:
+            reduction = int(round(received - desired_quantity))
+            adjustments[resource] = f"-{reduction}"
+            trades.append(f"concede {resource} by {reduction} units")
 
-    trade_str = "; ".join(trades) if trades else "Concede secondary resources to reach consensus"
+    satisfaction = (weighted_score / total_weight * 100) if total_weight else 0.0
+    personality = str(agent.get("personality", "")).lower()
+    threshold = 68.0
+    if "aggressive" in personality:
+        threshold += 8.0
+    elif "risk" in personality:
+        threshold -= 3.0
+
+    objective_action = "REJECT"
+    if not invalid and satisfaction >= threshold:
+        objective_action = "ACCEPT"
+    elif not invalid and satisfaction >= 35.0:
+        objective_action = "COUNTER"
+
+    requested_action = str(raw_action or "").strip().upper()
+    if requested_action == "ACCEPT":
+        # Gemini may request acceptance, but only the objective evaluator can
+        # approve it. A failed acceptance remains a counter or rejection.
+        action = objective_action if objective_action != "ACCEPT" else "ACCEPT"
+    elif requested_action in ("COUNTER", "REJECT", "OFFER"):
+        # A model's explicit negotiation position must not be upgraded merely
+        # because the numeric satisfaction score is high.
+        action = "REJECT" if invalid else requested_action
+    else:
+        action = objective_action
+
+    if requested_action == "COUNTER" and satisfaction >= threshold:
+        decision_explanation = (
+            "The proposal meets the satisfaction threshold, but the agent chose "
+            "to continue negotiating based on its objectives/personality."
+        )
+    elif action == "ACCEPT":
+        decision_explanation = "The proposal satisfies the agent's acceptance criteria."
+    elif action == "REJECT":
+        decision_explanation = "The proposal violates constraints or falls below the agent's minimum acceptable position."
+    else:
+        decision_explanation = "The proposal is negotiable but does not fully satisfy the agent's objectives."
+
+    trades = []
+    if action in ("COUNTER", "REJECT"):
+        for resource, adjustment in list(adjustments.items()):
+            if adjustment.startswith("+") and int(adjustment[1:]) <= 0:
+                del adjustments[resource]
+        trades = [
+            f"adjust {resource} by {value} units"
+            for resource, value in adjustments.items()
+        ]
+
+    trade_str = "; ".join(trades) if trades else "Protect high-priority resources and maintain the offered allocation"
 
     return {
         "action": action,
-        "satisfaction": round(satisfaction, 1),
+        "satisfaction": round(max(0.0, min(satisfaction, 100.0)), 1),
         "threshold": round(threshold, 1),
-        "is_accepted": is_accepted,
+        "is_accepted": action == "ACCEPT",
+        "explanation": decision_explanation,
         "trade_str": trade_str,
         "adjustments": adjustments
     }

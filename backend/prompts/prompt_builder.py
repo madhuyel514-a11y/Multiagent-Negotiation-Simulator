@@ -38,7 +38,16 @@ def _format_history(history):
         round_num = entry.get("round", "?")
         stance = entry.get("stance", "")
         stance_tag = f" [{stance.upper()}]" if stance and stance != "human" else ""
-        lines.append(f"Round {round_num} - {agent}{stance_tag}: {message}")
+        action = entry.get("action", "")
+        reasoning = entry.get("reasoning", "")
+        proposal = entry.get("parsed_proposal", {})
+        lines.append(
+            f"Round {round_num} - {agent}{stance_tag} ({action}): {message}"
+        )
+        if reasoning:
+            lines.append(f"  Reasoning: {reasoning}")
+        if proposal:
+            lines.append(f"  Proposal: {proposal}")
 
     return "\n".join(lines)
 
@@ -78,6 +87,8 @@ def build_prompt(
     history,
     total_budget=None,
     last_proposals=None,
+    current_proposal=None,
+    current_round=1,
 ):
     """
     Builds the LLM prompt using:
@@ -124,34 +135,15 @@ Your proposal MUST reflect genuine trade-offs based on your priorities.
 --------------------------------------------------
 """
 
-    # Role-specific conflict position (Adjusted for FAIRNESS per user request)
-    CONFLICT_POSITIONS = {
-        "Government Agent": {
-            "top_priority": "A fair share of Rescue Teams and Debris Clearance (approx 35-45%)",
-            "concede": "Medical Aid (take no more than 30%)",
-            "hold_firm": "Balanced distribution",
-        },
-        "NGO Agent": {
-            "top_priority": "A fair share of Medical Aid and Temporary Shelters (approx 35-45%)",
-            "concede": "Debris Clearance (take no more than 30%)",
-            "hold_firm": "Balanced distribution",
-        },
-        "District Administration Agent": {
-            "top_priority": "A fair share of Debris Clearance and Rescue Teams (approx 35-45%)",
-            "concede": "Medical Aid (take no more than 30%)",
-            "hold_firm": "Balanced distribution",
-        },
-    }
-
-    conflict_pos = CONFLICT_POSITIONS.get(agent_name, {})
-    conflict_section = ""
-    if conflict_pos:
-        conflict_section = f"""
-YOUR CONFLICT POSITION:
-- Top Priority (fight for this): {conflict_pos.get("top_priority", "")}
-- Willing to Concede: {conflict_pos.get("concede", "")}
-- Hold Firm On: {conflict_pos.get("hold_firm", "")}
-"""
+    current_proposal = current_proposal or {}
+    incoming_proposal = (
+        "; ".join(
+            f"{resource}: {quantity} units"
+            for resource, quantity in current_proposal.items()
+        )
+        if current_proposal
+        else "No incoming proposal yet; make the opening offer."
+    )
 
     prompt = f"""
 You are {persona['name']}.
@@ -173,7 +165,10 @@ Selected Personality:
 
 Negotiation Style:
 {persona['negotiation_style']}
-{conflict_section}
+CURRENT ROUND: {current_round}
+
+LATEST INCOMING PROPOSAL BEING EVALUATED:
+{incoming_proposal}
 
 PERSONALITY BEHAVIOUR RULES:
 
@@ -228,19 +223,20 @@ Conversation History:
 
 --------------------------------------------------
 {other_proposals_section}
-INSTRUCTIONS FOR YOUR NEXT PROPOSAL:
+INSTRUCTIONS FOR YOUR NEXT DECISION:
 
-Generate your next negotiation offer. Make it feel like a REAL negotiation:
+Evaluate the latest incoming proposal against your own objectives and make it
+feel like a REAL negotiation:
 
 You MUST:
-1. Use ONLY resource names from the allowed list: {resource_list}
-2. Include concrete numerical quantities for each resource
-3. Ensure quantities do NOT exceed available amounts
-4. DISAGREE with proposals that conflict with your priorities — explain why
-5. Reference other agents' specific numbers when arguing against them
-6. Make a genuine counter-proposal that reflects your priorities
-7. Show real trade-offs: what you are giving up and what you need in return
-8. Use assertive language: "I cannot accept...", "I insist on...", "I disagree because..."
+1. Decide whether to ACCEPT, COUNTER, or REJECT the incoming proposal.
+2. If countering, provide a concrete counterproposal and explain why it better serves your objectives.
+3. Make concessions on lower-priority resources when appropriate while protecting high-priority resources.
+4. Consider the full history above; do not respond in isolation.
+5. Do not decide simply because of the round number or automatically accept in a final round.
+6. Use ONLY resource names from the allowed list: {resource_list}
+7. Include concrete numerical quantities and never exceed available amounts.
+8. Use assertive language and reference specific incoming numbers when disagreeing.
 
 You MUST NOT:
 1. Simply "appreciate" every proposal without disagreement

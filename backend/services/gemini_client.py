@@ -44,7 +44,7 @@ def get_client():
 def _fallback_response() -> str:
     return json.dumps({
         "agent": "AI Agent",
-        "offer": {"food": 0, "medicine": 0, "water": 0},
+        "offer": {},
         "reason": "Use a balanced, need-based allocation while protecting critical emergency needs.",
         "accept": False,
     })

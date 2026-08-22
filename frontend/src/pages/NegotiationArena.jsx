@@ -13,6 +13,7 @@ function NegotiationArena() {
   const [consensus, setConsensus] = useState(0);
   const [consensusReached, setConsensusReached] = useState(false);
   const [negotiationEnded, setNegotiationEnded] = useState(false);
+  const [finalAllocation, setFinalAllocation] = useState(null);
   const [status, setStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -42,6 +43,7 @@ function NegotiationArena() {
     setConsensus(Number(state.consensus ?? data?.consensus ?? 0));
     setConsensusReached(Boolean(state.consensus_reached ?? data?.consensus_reached));
     setNegotiationEnded(Boolean(state.negotiation_ended ?? data?.negotiation_ended));
+    setFinalAllocation(state.final_allocation ?? data?.final_allocation ?? null);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
   };
@@ -147,21 +149,32 @@ function NegotiationArena() {
   const resources = scenario?.resources || ['Food', 'Medicine', 'Shelter', 'Rescue Teams'];
 
   const initialDemands = history.reduce((acc, item) => {
-    if (item.agent && item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0 && !acc[item.agent]) {
+    if (
+      item.agent &&
+      item.action?.toUpperCase() === 'OFFER' &&
+      item.parsed_proposal &&
+      Object.keys(item.parsed_proposal).length > 0 &&
+      !acc[item.agent]
+    ) {
       acc[item.agent] = item.parsed_proposal;
     }
     return acc;
   }, {});
 
-  const agreedAllocation = (() => {
-    for (let i = history.length - 1; i >= 0; i--) {
-      const item = history[i];
-      if (item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0) {
-        return item.parsed_proposal;
-      }
-    }
-    return {};
-  })();
+  const agreedAllocation = finalAllocation || {};
+
+  const isNestedAllocation = (allocation) => {
+    return (
+      allocation &&
+      typeof allocation === 'object' &&
+      Object.values(allocation).some(
+        (value) =>
+          value &&
+          typeof value === 'object' &&
+          !Array.isArray(value)
+      )
+    );
+  };
 
   return (
     <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
@@ -281,17 +294,56 @@ function NegotiationArena() {
                   {item.evaluation && (
                     <div className="mt-4 mb-2 rounded-xl bg-slate-900/5 p-4">
                       {item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0 && (
-                        <div className="mb-4">
-                          <p className="text-[10px] font-bold uppercase tracking-wider mb-2 opacity-70">Proposed Allocation</p>
-                          <div className="flex flex-wrap gap-2">
-                            {Object.entries(item.parsed_proposal).map(([res, val]) => (
-                              <span key={res} className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${item.agent?.includes('NGO') ? 'bg-blue-500 text-white' : 'bg-white text-slate-800'}`}>
-                                {res}: {val}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+  <div className="mb-4">
+    <p className="text-[10px] font-bold uppercase tracking-wider mb-2 opacity-70">
+      Proposed Allocation
+    </p>
+
+    <div className="space-y-3">
+      {Object.entries(item.parsed_proposal).map(([key, value]) => {
+        // Gemini may return a multi-agent allocation
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          return (
+            <div key={key}>
+              <p className="text-xs font-bold mb-2">
+                {key}
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(value).map(([res, amount]) => (
+                  <span
+                    key={`${key}-${res}`}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${
+                      item.agent?.includes('NGO')
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-white text-slate-800'
+                    }`}
+                  >
+                    {res}: {amount}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        }
+
+        // Normal flat proposal
+        return (
+          <span
+            key={key}
+            className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${
+              item.agent?.includes('NGO')
+                ? 'bg-blue-500 text-white'
+                : 'bg-white text-slate-800'
+            }`}
+          >
+            {key}: {value}
+          </span>
+        );
+      })}
+    </div>
+  </div>
+)}
                       
                       <div className="text-xs space-y-2 opacity-90">
                         <p>
@@ -299,7 +351,11 @@ function NegotiationArena() {
                           {item.evaluation.action === 'REJECT' && ` The agent rejects excessive allocations and counters: ${item.evaluation.trade_str}.`}
                           {item.evaluation.action === 'COUNTER' && ` The agent negotiates concessions: ${item.evaluation.trade_str}.`}
                           {item.evaluation.action === 'OFFER' && ` Opening baseline position established.`}
-                          {item.evaluation.action === 'ACCEPT' && ` Full consensus reached across all partners.`}
+                          {item.evaluation.action === 'ACCEPT' && (
+                            item === history[history.length - 1] && consensusReached
+                              ? ' Full consensus reached across all partners.'
+                              : ' Agent accepted the current proposal. Waiting for the remaining agents.'
+                          )}
                         </p>
                         
                         {!item.evaluation.is_accepted && item.evaluation.adjustments && Object.keys(item.evaluation.adjustments).length > 0 && (
@@ -359,8 +415,10 @@ function NegotiationArena() {
           <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl">
             <CheckCircle size={24} /> Final Negotiation Report
           </div>
-          <p className="mt-2 text-sm text-emerald-700/80 mb-6 font-medium">
-            The negotiation has concluded. Below is the summary of the opening positions and the final agreed allocation.
+            <p className="mt-2 text-sm text-emerald-700/80 mb-6 font-medium">
+            {consensusReached
+              ? 'The negotiation has concluded. Below is the summary of the opening positions and the final agreed allocation.'
+              : 'The negotiation concluded without unanimous agreement.'}
           </p>
           
           <div className="grid gap-6 lg:grid-cols-2">
@@ -371,11 +429,32 @@ function NegotiationArena() {
                   <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm">
                     <p className="text-sm font-bold text-slate-800 mb-3">{agentName}</p>
                     <div className="flex flex-wrap gap-2">
-                      {Object.entries(demands).map(([res, val]) => (
-                        <span key={res} className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
-                          {res}: {val}
+                      {demands && typeof demands === 'object' && !Array.isArray(demands) ? (
+                        isNestedAllocation(demands) ? (
+                          Object.entries(demands).map(([res, val]) => (
+                            <div key={res} className="w-full">
+                              <p className="text-sm font-bold text-slate-800 mb-2">{res}</p>
+                              <div className="flex flex-wrap gap-2">
+                                {Object.entries(val).map(([resource, amount]) => (
+                                  <span key={`${res}-${resource}`} className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
+                                    {resource}: {amount}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          Object.entries(demands).map(([res, val]) => (
+                            <span key={res} className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
+                              {res}: {val}
+                            </span>
+                          ))
+                        )
+                      ) : (
+                        <span className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
+                          {demands}
                         </span>
-                      ))}
+                      )}
                     </div>
                   </div>
                 ))}
@@ -383,19 +462,38 @@ function NegotiationArena() {
             </div>
             
             <div>
-              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">FINAL AGREED ALLOCATION</h3>
+              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+                {consensusReached ? 'FINAL AGREED ALLOCATION' : 'NO AGREEMENT REACHED'}
+              </h3>
               <div className="bg-[#009A65] text-white rounded-2xl p-6 shadow-md min-h-[160px] flex flex-col justify-start">
                 <p className="text-sm font-medium text-emerald-50 mb-5">
                   This allocation was reached at the end of the negotiation:
                 </p>
                 {Object.keys(agreedAllocation).length > 0 ? (
-                  <div className="flex flex-wrap gap-2.5">
-                    {Object.entries(agreedAllocation).map(([res, val]) => (
-                      <span key={res} className="bg-[#00B47A] text-white rounded-xl px-4 py-2 text-xs font-bold shadow-sm">
-                        {res}: {val}
-                      </span>
-                    ))}
-                  </div>
+                  isNestedAllocation(agreedAllocation) ? (
+                    <div className="space-y-4">
+                      {Object.entries(agreedAllocation).map(([agentName, allocation]) => (
+                        <div key={agentName}>
+                          <p className="text-sm font-bold mb-2">{agentName}</p>
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(allocation).map(([resource, amount]) => (
+                              <span key={`${agentName}-${resource}`} className="bg-[#00B47A] text-white rounded-xl px-4 py-2 text-xs font-bold shadow-sm">
+                                {resource}: {amount}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2.5">
+                      {Object.entries(agreedAllocation).map(([resource, amount]) => (
+                        <span key={resource} className="bg-[#00B47A] text-white rounded-xl px-4 py-2 text-xs font-bold shadow-sm">
+                          {resource}: {amount}
+                        </span>
+                      ))}
+                    </div>
+                  )
                 ) : (
                   <p className="text-sm italic text-emerald-100">No valid allocations were recorded.</p>
                 )}

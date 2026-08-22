@@ -12,24 +12,55 @@ import itertools
 API_KEY = os.getenv("GEMINI_API_KEY")
 API_KEYS_STR = os.getenv("GEMINI_API_KEYS")
 
+
+def _configured_keys():
+    configured = API_KEYS_STR.split(",") if API_KEYS_STR else [API_KEY or ""]
+    placeholders = {"", "your_api_key", "your-key", "changeme", "replace_me", "none", "null"}
+    return [
+        key.strip().strip("\"'")
+        for key in configured
+        if key.strip().strip("\"'").lower() not in placeholders
+    ]
+
 _clients = []
 
-keys = []
-if API_KEYS_STR:
-    keys = [k.strip() for k in API_KEYS_STR.split(",") if k.strip()]
-elif API_KEY:
-    keys = [API_KEY.strip()]
+keys = _configured_keys()
 
 for key in keys:
     try:
         _clients.append(genai.Client(api_key=key))
     except Exception as exc:
-        print(f"Gemini initialization failed for key {key[:4]}...:", exc)
+        print(f"[GEMINI] client initialization failed: {type(exc).__name__}")
 
 _client_cycle = itertools.cycle(_clients) if _clients else None
 
 def get_client():
     return next(_client_cycle) if _client_cycle else None
+
+
+def _rotated_clients(selected_client):
+    if not selected_client or not _clients:
+        return []
+
+    selected_index = next(
+        (index for index, client in enumerate(_clients) if client is selected_client),
+        0,
+    )
+    return [
+        _clients[(selected_index + offset) % len(_clients)]
+        for offset in range(len(_clients))
+    ]
+
+
+def _failure_category(error):
+    text = str(error).upper()
+    if "429" in text or "RESOURCE_EXHAUSTED" in text:
+        return "429 RESOURCE_EXHAUSTED"
+    if "401" in text or "UNAUTHENTICATED" in text:
+        return "401 UNAUTHENTICATED"
+    if "403" in text or "PERMISSION_DENIED" in text:
+        return "403 PERMISSION_DENIED"
+    return type(error).__name__
 
 
 # =========================================================
@@ -279,6 +310,32 @@ def _validate_response_resources(message, allowed_resources, resource_quantities
     return True
 
 
+def _validation_failure_reason(message, allowed_resources, resource_quantities):
+    entries = re.findall(
+        r"([A-Za-z][A-Za-z0-9\s&/-]*)\s*:\s*(\d+)\s*(?:units?|qty\.?|quantity)?",
+        message or "",
+        re.IGNORECASE,
+    )
+    if not entries:
+        return "schema validation failure: no resource quantities"
+
+    allowed = {resource.lower() for resource in allowed_resources}
+    extracted = {name.strip().lower(): int(quantity) for name, quantity in entries}
+    unknown = set(extracted) - allowed
+    if unknown:
+        return f"invalid resource names: {sorted(unknown)}"
+
+    for resource, quantity in extracted.items():
+        available = next(
+            (value for name, value in resource_quantities.items() if name.lower() == resource),
+            None,
+        )
+        if available is not None and (quantity < 0 or quantity > available):
+            return f"invalid quantities: {resource}={quantity}, available={available}"
+
+    return "schema validation failure: missing or zero allocation"
+
+
 # =========================================================
 # ROLE-SPECIFIC FALLBACK WITH REALISTIC CONFLICT POSITIONS
 # =========================================================
@@ -492,6 +549,28 @@ def _fallback_response(prompt, allowed_resources=None, agent_name=None,
     }
 
 
+def _generic_fallback_response(allowed_resources, resource_quantities, last_proposals, reason):
+    """Return a scenario-safe response when no Gemini client is configured."""
+    print(f"[FALLBACK] reason={reason}")
+    proposal_parts = []
+    for resource in allowed_resources or []:
+        available = int(resource_quantities.get(resource.lower(), 0))
+        quantity = min(available, max(1, round(available / 3))) if available else 0
+        proposal_parts.append(f"{resource}: {quantity} units")
+
+    proposal = "; ".join(proposal_parts)
+    action = "COUNTER" if last_proposals else "OFFER"
+    return {
+        "message": (
+            f"I have reviewed the current negotiation context. "
+            f"My {action.lower()} is: {proposal}."
+        ),
+        "reasoning": "Fallback response uses only the resources and quantities supplied by the scenario.",
+        "stance": "moderate",
+        "action": action,
+    }
+
+
 # =========================================================
 # GEMINI
 # =========================================================
@@ -503,6 +582,8 @@ async def ask_model(
     last_proposals=None,
     current_round=1,
     resource_quantities=None,
+    current_proposal=None,
+    agent_names=None,
 ):
     # Use provided agent_name if available, otherwise try to detect from prompt
     current_agent = agent_name.lower() if agent_name else _detect_agent(prompt)
@@ -529,6 +610,18 @@ async def ask_model(
     if total_budget is None and resource_quantities:
         total_budget = sum(resource_quantities.values())
 
+    current_proposal = current_proposal or {}
+    agent_names = agent_names or [agent_name or "Current Agent"]
+    allocation_format = "\n".join(
+        f"  {name} Allocation: <each scenario resource>: N units"
+        for name in agent_names
+    )
+    incoming_proposal_str = (
+        "; ".join(f"{name}: {quantity} units" for name, quantity in current_proposal.items())
+        if current_proposal
+        else "No incoming proposal yet; make the opening offer."
+    )
+
     print(
         "Negotiation model called for agent:",
         agent_name or current_agent,
@@ -541,14 +634,15 @@ async def ask_model(
     # If Gemini isn't configured, use guaranteed fallback.
     # -----------------------------------------------------
 
-    client = get_client()
-    if client is None:
-        return _fallback_response(
-            prompt, allowed_resources,
-            agent_name=current_agent,
-            resource_quantities=resource_quantities,
-            current_round=current_round,
-            last_proposals=last_proposals,
+    selected_client = get_client()
+    clients = _rotated_clients(selected_client)
+    print(f"[GEMINI] client_available={selected_client is not None}")
+    if not clients:
+        return _generic_fallback_response(
+            allowed_resources,
+            resource_quantities,
+            last_proposals,
+            "no client/API key",
         )
 
     # -----------------------------------------------------
@@ -590,61 +684,10 @@ async def ask_model(
             f"Your proposal must reflect GENUINE TRADE-OFFS.\n"
         )
 
-    # -----------------------------------------------------
-    # Role-specific instructions with distinct conflict positions
-    # -----------------------------------------------------
-
-    role_instruction = {
-        "government": f"""
-You are the GOVERNMENT AGENT negotiating on behalf of the national disaster management authority.
-This is Round {current_round} of the negotiation.
-
-YOUR PRIORITIES (Fair & Balanced Distribution):
-1. Rescue Teams — Priority (aim for ~35-45% of total pool).
-2. Debris Clearance Equipment — High Priority (aim for ~35-40% of pool).
-3. Medical Aid — Medium Priority (~25-30% of pool).
-4. Temporary Shelters — Medium Priority (~25-30% of pool).
-
-STRATEGY & RULES:
-- STRIVE FOR FAIR NEGOTIATION: Do NOT demand more than 45% of ANY resource.
-- In Round 1: Propose a balanced opening offer with Rescue & Debris slightly higher (35-45%), and Medical/Shelter around 25-30%.
-- In Later Rounds: Compromise flexibly on secondary needs while ensuring search operations stay funded.
-""",
-
-        "ngo": f"""
-You are the NGO AGENT representing humanitarian frontline organizations.
-This is Round {current_round} of the negotiation.
-
-YOUR PRIORITIES (Fair & Balanced Distribution):
-1. Medical Aid — Priority (aim for ~35-45% of total pool).
-2. Temporary Shelters — High Priority (aim for ~35-45% of pool).
-3. Rescue Teams — Medium Priority (~25-30% of pool).
-4. Debris Clearance Equipment — Medium Priority (~20-25% of pool).
-
-STRATEGY & RULES:
-- STRIVE FOR FAIR NEGOTIATION: Do NOT demand more than 45% of ANY resource.
-- In Round 1: Propose a fair opening offer with Medical & Shelters slightly higher (35-45%), leaving ample Rescue & Debris for partners.
-- In Later Rounds: Defend frontline medical triage while actively seeking a 3-way consensus.
-""",
-
-        "district": f"""
-You are the DISTRICT ADMINISTRATION AGENT representing the local district municipal authority.
-This is Round {current_round} of the negotiation.
-
-YOUR PRIORITIES (Fair & Balanced Distribution):
-1. Debris Clearance Equipment — Priority (aim for ~35-45% of total pool).
-2. Rescue Teams — High Priority (aim for ~30-35% of pool).
-3. Temporary Shelters — High Priority (~30-35% of pool).
-4. Medical Aid — Medium Priority (~25-30% of pool).
-
-STRATEGY & RULES:
-- STRIVE FOR FAIR NEGOTIATION: Do NOT demand more than 45% of ANY resource.
-- In Round 1: Propose a fair opening offer ensuring municipal access routes while balancing clinical and rescue needs.
-- In Later Rounds: Facilitate local distribution coordination and bridge gaps between partners.
-"""
-    }.get(
-        current_agent,
-        f"You are a negotiation participant in Round {current_round}. Strive for a balanced, fair agreement (approx 33% share)."
+    role_instruction = (
+        "Use the current agent's role, goal, priorities, constraints, personality, "
+        "and negotiation style from the context above. Protect high-priority "
+        "objectives while making practical concessions on lower-priority items."
     )
 
     instruction = f"""
@@ -653,6 +696,8 @@ The goal is to reach a REAL AGREEMENT through genuine conflict and compromise.
 {budget_str}
 CURRENT AGENT: {current_agent.upper()}
 CURRENT ROUND: {current_round}
+LATEST INCOMING PROPOSAL BEING EVALUATED:
+{incoming_proposal_str}
 
 YOUR ROLE AND NEGOTIATION POSITION:
 {role_instruction}
@@ -662,32 +707,28 @@ YOUR ROLE AND NEGOTIATION POSITION:
 FULL NEGOTIATION CONTEXT AND HISTORY:
 {prompt}
 
-=== YOUR TASK FOR ROUND {current_round}/5 ===
+=== YOUR TASK ===
 
-{
-"ROUND 1 INSTRUCTION: Establish your opening demands assertively. Set action to 'OFFER'. Ask for ~45-50% of your top priority resources, leaving other needs for partners. Explain your agency's vital mandate." if current_round == 1 else
-"ROUND 2-4 INSTRUCTION: This is an ongoing negotiation. Specifically REFERENCE other agents' previous numbers and proposals. If another agent's demand creates an excessive deficit or undercuts your mandate, REJECT it (set action to 'REJECT'). If proposing a compromise with trade-offs, COUNTER it (set action to 'COUNTER'). Offer concrete numbers with genuine concessions on secondary items in exchange for protecting primary responsibilities. Do NOT simply accept yet — debate and defend your mandate." if current_round < 5 else
-"ROUND 5 (FINAL ROUND) INSTRUCTION: This is the final round. All agencies have converged on a fair, complementary compromise (Government gets 45% Rescue/40% Debris, NGO gets 45% Medical/45% Shelters, District gets 45% Debris/35% Rescue). Set action to 'ACCEPT', state your full acceptance, endorse the joint disaster response plan, and celebrate the 3-way consensus."
-}
+Evaluate the LATEST INCOMING PROPOSAL against your own objectives. Decide
+independently whether to ACCEPT, COUNTER, or REJECT it. Do not choose an
+action because of the round number, and do not automatically accept in a
+final round. If you COUNTER, include a concrete proposal using only the
+scenario resources and explain the concessions and trade-offs.
 
 === CRITICAL RULES ===
 
 1. Include EXPLICIT numbers for EVERY resource: "Resource Name: N units"
 2. Quantities MUST NOT exceed the available amounts shown in the context
 3. Your proposal must reflect REAL TRADE-OFFS
-4. In Rounds 1-4, use assertive negotiation language: "I cannot accept...", "I counter-propose...", "While I concede X, I insist on Y..."
-5. In Round 5 only, state full acceptance and consensus.
-6. Reference specific numbers from other agents' proposals when you disagree or counter
-7. *** MINIMUM FLOOR RULE ***: NEVER propose 0 units for any resource that has available quantity > 0 (minimum at least 10%).
-
-=== GOOD EXAMPLE (all resources get non-zero allocations) ===
-"The Government's proposal gives only 10 Medical Aid units while we have 300 injured civilians. That is unacceptable.
-I counter-propose: Rescue Teams: 15 units; Medical Aid: 28 units; Temporary Shelters: 6 units; Debris Clearance Equipment: 8 units.
-I am conceding Debris Clearance (giving it only 8 of 35 units) to address the District's concern, but Medical Aid must increase."
-
-=== BAD EXAMPLE (NEVER DO THIS — zeroing out resources) ===
-"NGO Agent: Rescue Teams: 5 units; Medical Aid: 30 units; Temporary Shelters: 0 units; Debris Clearance Equipment: 0 units."
-← WRONG: Proposing 0 for available resources is not realistic negotiation.
+4. Reference specific numbers from the incoming proposal and full history.
+5. Protect high-priority objectives, but concede lower-priority resources when that improves agreement.
+6. Use only the resource names defined in the current scenario; never invent resources.
+7. Never exceed any available quantity shown in the context.
+8. An ACCEPT response must accept the incoming proposal, not a newly invented proposal.
+9. For an OFFER or COUNTER, provide the complete allocation for every configured agent,
+   not aggregate totals. Use these allocation sections:
+{allocation_format}
+10. The sum of each resource across all agent sections must equal its available quantity.
 
 Return ONLY valid JSON:
 
@@ -707,80 +748,112 @@ Return ONLY valid JSON:
         "gemini-3.6-flash"
     ]
 
-    for model_name in models:
+    last_failure = "all configured keys failed"
+    for client_index, client in enumerate(clients, 1):
+        print(f"[GEMINI] trying key {client_index}/{len(clients)}")
+        client_succeeded = False
 
-        try:
+        for model_name in models:
 
-            response = client.models.generate_content(
-                model=model_name,
-                contents=instruction
-            )
+            try:
 
-            text = getattr(
-                response,
-                "text",
-                ""
-            ) or ""
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=instruction
+                )
 
-            result = _extract_json(text)
+                text = getattr(
+                    response,
+                    "text",
+                    ""
+                ) or ""
 
-            if result:
+                print(f"[GEMINI] request_succeeded model={model_name}")
+                print(f"[GEMINI] raw_response={text}")
+                if not text.strip():
+                    last_failure = "empty response"
+                    print(f"[GEMINI] key {client_index} failed: {last_failure}")
+                    break
+                result = _extract_json(text)
 
-                message = str(
-                    result.get("message", "")
-                ).strip()
+                if result:
+                    print("[GEMINI] parsing=success")
 
-                reasoning = str(
-                    result.get("reasoning", "")
-                ).strip()
+                    message = str(
+                        result.get("message", "")
+                    ).strip()
 
-                stance = str(
-                    result.get(
-                        "stance",
-                        "moderate"
-                    )
-                ).strip()
+                    reasoning = str(
+                        result.get("reasoning", "")
+                    ).strip()
 
-                action = str(
-                    result.get(
-                        "action",
-                        "COUNTER"
-                    )
-                ).strip().upper()
+                    stance = str(
+                        result.get(
+                            "stance",
+                            "moderate"
+                        )
+                    ).strip()
 
-                if message:
-                    is_valid = _validate_response_resources(
+                    action = str(
+                        result.get(
+                            "action",
+                            "COUNTER"
+                        )
+                    ).strip().upper()
+                    print(f"[GEMINI] parsed_action={action}")
+
+                    if message:
+                        print(f"[GEMINI] extracted_message={message}")
+                        entries = re.findall(
+                        r"([A-Za-z][A-Za-z0-9\s&/-]*)\s*:\s*(\d+)\s*(?:units?|qty\.?|quantity)?",
                         message,
-                        allowed_resources,
-                        resource_quantities
+                        re.IGNORECASE,
                     )
+                        print(
+                            "[GEMINI] extracted_proposal="
+                            + str({name.strip(): int(quantity) for name, quantity in entries})
+                        )
+                        is_valid = _validate_response_resources(
+                            message,
+                            allowed_resources,
+                            resource_quantities
+                        )
 
-                    if is_valid:
-                        return {
-                            "action": action,
-                            "message": message,
-                            "reasoning": reasoning,
-                            "stance": stance
-                        }
+                        if is_valid:
+                            print(f"[GEMINI] key {client_index} succeeded")
+                            print(f"[GEMINI] extracted_proposal=validated_from_message")
+                            return {
+                                "action": action,
+                                "message": message,
+                                "reasoning": reasoning,
+                                "stance": stance
+                            }
+                        last_failure = _validation_failure_reason(
+                            message,
+                            allowed_resources,
+                            resource_quantities,
+                        )
+                        print(f"[GEMINI] key {client_index} failed: {last_failure}")
                     else:
-                        print(f"Response validation failed for {model_name}: invalid resource proposal")
-                        # Fall through to fallback
+                        last_failure = "schema validation failure: missing message"
+                        print(f"[GEMINI] key {client_index} failed: {last_failure}")
+                else:
+                    last_failure = "invalid JSON"
+                    print(f"[GEMINI] key {client_index} failed: {last_failure}")
 
-        except Exception as exc:
+            except Exception as exc:
 
-            print(
-                f"Gemini {model_name} failed:",
-                exc
-            )
+                last_failure = _failure_category(exc)
+                print(f"[GEMINI] key {client_index} failed: {last_failure}")
+                break
 
     # -----------------------------------------------------
     # Guaranteed role-specific fallback with resources
     # -----------------------------------------------------
 
-    return _fallback_response(
-        prompt, allowed_resources,
-        agent_name=current_agent,
-        resource_quantities=resource_quantities,
-        current_round=current_round,
-        last_proposals=last_proposals,
+    return _generic_fallback_response(
+        allowed_resources,
+        resource_quantities,
+        last_proposals,
+        last_failure,
     )

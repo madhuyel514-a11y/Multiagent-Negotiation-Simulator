@@ -1,5 +1,8 @@
 import os
 import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 # Ensure the backend package directories are resolved before similarly named
 # project-level folders when this file is started as `python backend\main.py`.
@@ -8,19 +11,14 @@ if BACKEND_DIR in sys.path:
     sys.path.remove(BACKEND_DIR)
 sys.path.insert(0, BACKEND_DIR)
 
-from dotenv import load_dotenv
+# Load configuration before importing modules that initialize Gemini clients.
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from services.negotiation_orchestrator import NegotiationOrchestrator
-
-
-# =========================================================
-# LOAD ENVIRONMENT VARIABLES
-# =========================================================
-
-load_dotenv()
 
 
 # =========================================================

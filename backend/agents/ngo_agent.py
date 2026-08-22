@@ -14,7 +14,12 @@ class NGOAgent(BaseAgent):
 
     async def act(self, context: dict, gemini_ask) -> dict:
         prompt = self.system_prompt(context.get("scenario", {}))
-        prompt += f"\nPersonality: {self.personality}. Fight for Medical Aid and Temporary Shelters for vulnerable populations."
+        prompt += f"\nPersonality: {self.personality}. Protect the highest-priority objectives in your persona."
+        prompt += f"\nScenario: {context.get('scenario', {})}"
+        prompt += f"\nPriorities: {context.get('agent', {}).get('priorities', [])}"
+        prompt += "\nNegotiation style: reason from the stated priorities, protect essential objectives, and make proportionate concessions."
+        prompt += f"\nCurrent round: {context.get('current_round', 1)}"
+        prompt += f"\nLatest incoming proposal being evaluated: {context.get('current_proposal', {}) or 'No proposal yet; make the opening offer.'}"
 
         resource_quantities = context.get("resource_quantities", {})
         if resource_quantities:
@@ -31,4 +36,6 @@ class NGOAgent(BaseAgent):
             last_proposals=context.get("last_proposals", {}),
             current_round=context.get("current_round", 1),
             resource_quantities=resource_quantities,
+            current_proposal=context.get("current_proposal", {}),
+            agent_names=[item.get("name") for item in context.get("agents", [])],
         )
