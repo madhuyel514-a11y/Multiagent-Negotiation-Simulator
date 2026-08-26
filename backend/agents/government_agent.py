@@ -38,4 +38,7 @@ class GovernmentAgent(BaseAgent):
             resource_quantities=resource_quantities,
             current_proposal=context.get("current_proposal", {}),
             agent_names=[item.get("name") for item in context.get("agents", [])],
+            max_rounds=context.get("max_rounds", 5),
+            scenario=context.get("scenario", {}),
+            stubborn_until=context.get("stubborn_until")
         )

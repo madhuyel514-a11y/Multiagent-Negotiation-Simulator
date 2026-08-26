@@ -1,8 +1,152 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, CheckCircle, ClipboardList, Shield, Sparkles } from 'lucide-react';
+import { Activity, CheckCircle, ClipboardList, Shield, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
+// ─────────────────────────────────────────────
+// Agent colour palette
+// ─────────────────────────────────────────────
+const AGENT_STYLES = {
+  government: {
+    bg: 'bg-blue-50',
+    border: 'border-blue-200',
+    badge: 'bg-blue-700 text-white',
+    dot: 'bg-blue-600',
+    label: 'text-blue-800',
+    chip: 'bg-blue-100 text-blue-800',
+    headerBg: 'bg-blue-600',
+    headerText: 'text-white',
+    tagBg: 'bg-blue-100 text-blue-700',
+  },
+  ngo: {
+    bg: 'bg-emerald-50',
+    border: 'border-emerald-200',
+    badge: 'bg-emerald-700 text-white',
+    dot: 'bg-emerald-600',
+    label: 'text-emerald-800',
+    chip: 'bg-emerald-100 text-emerald-800',
+    headerBg: 'bg-emerald-600',
+    headerText: 'text-white',
+    tagBg: 'bg-emerald-100 text-emerald-700',
+  },
+  district: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+    badge: 'bg-amber-600 text-white',
+    dot: 'bg-amber-500',
+    label: 'text-amber-800',
+    chip: 'bg-amber-100 text-amber-800',
+    headerBg: 'bg-amber-500',
+    headerText: 'text-white',
+    tagBg: 'bg-amber-100 text-amber-700',
+  },
+  default: {
+    bg: 'bg-slate-50',
+    border: 'border-slate-200',
+    badge: 'bg-slate-600 text-white',
+    dot: 'bg-slate-500',
+    label: 'text-slate-800',
+    chip: 'bg-slate-100 text-slate-700',
+    headerBg: 'bg-slate-600',
+    headerText: 'text-white',
+    tagBg: 'bg-slate-100 text-slate-600',
+  },
+};
+
+const ACTION_STYLES = {
+  OFFER: { cls: 'bg-sky-100 text-sky-800', label: 'PROPOSES' },
+  COUNTER: { cls: 'bg-amber-100 text-amber-800', label: 'COUNTER' },
+  REJECT: { cls: 'bg-rose-100 text-rose-800', label: 'OBJECTS' },
+  ACCEPT: { cls: 'bg-emerald-100 text-emerald-800', label: 'ACCEPTS' },
+};
+
+function getAgentStyle(agentName) {
+  const n = (agentName || '').toLowerCase();
+  if (n.includes('government')) return AGENT_STYLES.government;
+  if (n.includes('ngo')) return AGENT_STYLES.ngo;
+  if (n.includes('district')) return AGENT_STYLES.district;
+  return AGENT_STYLES.default;
+}
+
+function getActionStyle(action) {
+  return ACTION_STYLES[(action || '').toUpperCase()] || { cls: 'bg-slate-100 text-slate-700', label: action || 'SPEAK' };
+}
+
+// ─────────────────────────────────────────────
+// Single transcript entry card
+// ─────────────────────────────────────────────
+function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
+  const [expanded, setExpanded] = useState(false);
+  const style = getAgentStyle(item.agent);
+  const actionStyle = getActionStyle(item.action);
+  const hasProposal = item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0;
+  const hasReasoning = item.reasoning && item.reasoning.trim().length > 0;
+  const hasEvaluation = item.evaluation;
+
+  // Build the round label: prefer backend-generated, else derive
+  const roundLabel = item.round_label || `Round ${item.round} — ${item.agent || 'Agent'} responds`;
+
+  const displayMessage = item.speech || item.message || '';
+
+  return (
+    <div className="relative pl-8">
+      {/* Timeline dot */}
+      <div className={`absolute left-0 top-5 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${style.dot}`} />
+
+      {/* Round label separator */}
+      <div className="mb-2">
+        <span className="inline-block text-[11px] font-bold uppercase tracking-widest text-slate-400 select-none">
+          {roundLabel}
+        </span>
+      </div>
+
+      {/* Agent card */}
+      <div className={`rounded-2xl border ${style.border} ${style.bg} overflow-hidden shadow-sm`}>
+        {/* Card header */}
+        <div className={`flex items-center gap-3 px-4 py-2.5 ${style.headerBg}`}>
+          <span className={`text-xs font-extrabold tracking-wider ${style.headerText} uppercase`}>
+            {item.agent || 'Agent'}
+          </span>
+          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${actionStyle.cls}`}>
+            {actionStyle.label}
+          </span>
+        </div>
+
+        {/* Main speech bubble */}
+        <div className="px-4 py-3">
+          <p className={`text-sm leading-relaxed ${style.label} font-medium`}>
+            {displayMessage || <em className="opacity-50">Waiting for response...</em>}
+          </p>
+        </div>
+
+        {/* Resource allocation chips — only this agent's own proposal */}
+        {hasProposal && (
+          <div className="px-4 pb-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+              Resource request
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(item.parsed_proposal).map(([resource, amount]) => {
+                // Skip nested (multi-agent) allocations — show flat only
+                if (typeof amount === 'object') return null;
+                return (
+                  <span key={resource} className={`text-xs font-semibold rounded-full px-3 py-1 ${style.chip}`}>
+                    {resource}: {amount}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────
 function NegotiationArena() {
   const [scenario, setScenario] = useState(null);
   const [config, setConfig] = useState(null);
@@ -12,6 +156,8 @@ function NegotiationArena() {
   const [maxRounds, setMaxRounds] = useState(5);
   const [consensus, setConsensus] = useState(0);
   const [consensusReached, setConsensusReached] = useState(false);
+  const [agreedAgents, setAgreedAgents] = useState(0);
+  const [totalAgents, setTotalAgents] = useState(0);
   const [negotiationEnded, setNegotiationEnded] = useState(false);
   const [finalAllocation, setFinalAllocation] = useState(null);
   const [status, setStatus] = useState('idle');
@@ -19,6 +165,7 @@ function NegotiationArena() {
   const [apiError, setApiError] = useState(null);
   const [isAutoRunning, setIsAutoRunning] = useState(false);
   const startedRef = useRef(false);
+  const transcriptEndRef = useRef(null);
 
   useEffect(() => {
     try {
@@ -35,6 +182,13 @@ function NegotiationArena() {
     }
   }, []);
 
+  // Auto-scroll transcript to bottom on new entries
+  useEffect(() => {
+    if (transcriptEndRef.current) {
+      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [history]);
+
   const applyState = (data) => {
     const state = data?.state || data || {};
     if (data?.session_id) setSessionId(data.session_id);
@@ -42,6 +196,8 @@ function NegotiationArena() {
     setCurrentRound(Number(state.current_round ?? data?.round ?? 1));
     setConsensus(Number(state.consensus ?? data?.consensus ?? 0));
     setConsensusReached(Boolean(state.consensus_reached ?? data?.consensus_reached));
+    setAgreedAgents(Number(state.agreed_agents ?? data?.agreed_agents ?? 0));
+    setTotalAgents(Number(state.total_agents ?? data?.total_agents ?? config?.agents?.length ?? 3));
     setNegotiationEnded(Boolean(state.negotiation_ended ?? data?.negotiation_ended));
     setFinalAllocation(state.final_allocation ?? data?.final_allocation ?? null);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
@@ -56,9 +212,9 @@ function NegotiationArena() {
       body: JSON.stringify({
         scenario,
         agents: config.agents || scenario.agents || [],
-        config: { 
+        config: {
           max_rounds: Number(config.max_rounds) || 5,
-          resourceQuantities: config.resourceQuantities || scenario.resourceQuantities || {}
+          resourceQuantities: config.resourceQuantities || scenario.resourceQuantities || {},
         },
       }),
     });
@@ -95,6 +251,7 @@ function NegotiationArena() {
     } catch (error) {
       console.error(error);
       setApiError(error.message);
+      setIsAutoRunning(false); // Stop auto-running on error
     } finally {
       setLoading(false);
     }
@@ -140,13 +297,12 @@ function NegotiationArena() {
     }
   };
 
-  const placeholders = [
-    { agent: 'Government Agent', message: 'Waiting for negotiation...' },
-    { agent: 'NGO Agent', message: 'Waiting for negotiation...' },
-    { agent: 'District Administration Agent', message: 'Waiting for negotiation...' },
-  ];
+  const agreedAllocation = finalAllocation || {};
 
-  const resources = scenario?.resources || ['Food', 'Medicine', 'Shelter', 'Rescue Teams'];
+  const isNestedAllocation = (allocation) =>
+    allocation &&
+    typeof allocation === 'object' &&
+    Object.values(allocation).some((v) => v && typeof v === 'object' && !Array.isArray(v));
 
   const initialDemands = history.reduce((acc, item) => {
     if (
@@ -161,35 +317,45 @@ function NegotiationArena() {
     return acc;
   }, {});
 
-  const agreedAllocation = finalAllocation || {};
+  const statusLabel = loading
+    ? 'AI thinking...'
+    : status === 'max_rounds_reached'
+      ? 'Completed'
+      : status === 'consensus_reached' || consensusReached
+        ? 'Agreement reached'
+        : 'Active';
 
-  const isNestedAllocation = (allocation) => {
-    return (
-      allocation &&
-      typeof allocation === 'object' &&
-      Object.values(allocation).some(
-        (value) =>
-          value &&
-          typeof value === 'object' &&
-          !Array.isArray(value)
-      )
-    );
-  };
+  const progressPct = maxRounds > 0 ? Math.min(100, ((currentRound - 1) / maxRounds) * 100) : 0;
 
   return (
     <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
+      {/* ── Header ── */}
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-semibold text-slate-800 sm:text-4xl">Negotiation Arena</h1>
-        <p className="mx-auto mt-3 max-w-2xl text-base text-slate-600 sm:text-lg">
-          Observe the AI agents negotiate disaster-relief resources turn by turn.
+        <p className="mx-auto mt-3 max-w-2xl text-base text-slate-500 sm:text-lg">
+          Observe each AI agent negotiate in their own voice — round by round.
         </p>
-        <div className="mt-4 flex justify-center gap-3">
+        <div className="mt-4 flex justify-center gap-3 flex-wrap">
           <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
             Round {currentRound || 1} / {maxRounds}
           </span>
-          <span className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
-            {loading ? 'AI thinking...' : status === 'max_rounds_reached' ? 'Completed' : status === 'consensus_reached' ? 'Agreement reached' : 'Active'}
+          <span
+            className={`rounded-full px-4 py-2 text-sm font-semibold ${loading
+                ? 'bg-amber-50 text-amber-700'
+                : consensusReached
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-slate-100 text-slate-600'
+              }`}
+          >
+            {statusLabel}
           </span>
+        </div>
+        {/* Round progress bar */}
+        <div className="mt-4 mx-auto max-w-sm h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-blue-500 transition-all duration-500"
+            style={{ width: `${progressPct}%` }}
+          />
         </div>
       </div>
 
@@ -199,57 +365,64 @@ function NegotiationArena() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* ── Info row ── */}
+      <div className="grid gap-6 lg:grid-cols-3 mb-8">
         <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
           <div className="flex items-center gap-2 text-slate-800">
             <ClipboardList size={18} className="text-blue-600" />
-            <h2 className="text-lg font-semibold">Scenario Information</h2>
+            <h2 className="text-base font-semibold">Scenario</h2>
           </div>
-          <p className="mt-3 text-sm font-medium text-blue-600">{scenario?.title || 'No scenario selected'}</p>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{scenario?.description || 'Choose a scenario first.'}</p>
+          <p className="mt-2 text-sm font-medium text-blue-600">{scenario?.title || 'No scenario selected'}</p>
+          <p className="mt-1 text-sm leading-6 text-slate-500">{scenario?.description || 'Choose a scenario first.'}</p>
         </div>
 
         <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
           <div className="flex items-center gap-2 text-slate-800">
             <Shield size={18} className="text-emerald-600" />
-            <h2 className="text-lg font-semibold">Selected Personalities</h2>
+            <h2 className="text-base font-semibold">Agent Personalities</h2>
           </div>
           <div className="mt-3 space-y-2">
-            {(config?.agents || []).map((agent) => (
-              <div key={agent.id} className="rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
-                {agent.name || `Agent ${agent.id}`}: <span className="font-semibold text-blue-700">{agent.personality}</span>
-              </div>
-            ))}
+            {(config?.agents || []).map((agent) => {
+              const s = getAgentStyle(agent.name);
+              return (
+                <div key={agent.id} className="rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm flex items-center gap-2">
+                  <span className={`inline-block w-2 h-2 rounded-full ${s.dot}`} />
+                  {agent.name || `Agent ${agent.id}`}:
+                  <span className="font-semibold text-slate-800">{agent.personality}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
         <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
           <div className="flex items-center gap-2 text-slate-800">
             <Activity size={18} className="text-amber-500" />
-            <h2 className="text-lg font-semibold">Status</h2>
+            <h2 className="text-base font-semibold">Controls</h2>
           </div>
-          <div className="mt-3 text-sm text-slate-600">
-            Consensus: <span className="font-semibold">{(consensus * 100).toFixed(0)}%</span>
+          <div className="mt-3 text-sm text-slate-500">
+            Agents Agreed: <span className="font-semibold text-slate-700">{agreedAgents} / {totalAgents || 3}</span>
           </div>
-          <div className="mt-4 flex gap-3">
+          <div className="mt-3 flex gap-2 flex-wrap">
             <button
               onClick={runTurn}
               disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
-              className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-blue-700 transition-colors"
             >
-              {loading && !isAutoRunning ? 'Thinking...' : 'Run Next Turn'}
+              {loading && !isAutoRunning ? 'Thinking...' : 'Next Turn'}
             </button>
             <button
               onClick={() => setIsAutoRunning(!isAutoRunning)}
               disabled={negotiationEnded || consensusReached}
-              className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${isAutoRunning ? 'bg-red-500' : 'bg-emerald-500'}`}
+              className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${isAutoRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'
+                }`}
             >
-              {isAutoRunning ? 'Stop Auto Run' : 'Auto Run'}
+              {isAutoRunning ? 'Stop Auto' : 'Auto Run'}
             </button>
             <button
               onClick={reset}
               disabled={loading}
-              className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-amber-600 transition-colors"
             >
               Reset
             </button>
@@ -257,143 +430,90 @@ function NegotiationArena() {
         </div>
       </div>
 
-      <div className="mt-8 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      {/* ── Main content ── */}
+      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+
+        {/* ── Transcript ── */}
         <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-6">
             <Sparkles size={18} className="text-blue-600" />
             <h2 className="text-xl font-semibold text-slate-800">Negotiation Transcript</h2>
+            <span className="ml-auto text-xs font-medium text-slate-400">{history.length} turns</span>
           </div>
-          <div className="mt-6 space-y-4">
-            {(history.length ? history : placeholders).map((item, i) => (
-              <div key={`${i}-${item.agent || ''}`} className={`flex ${item.agent?.includes('NGO') ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${item.agent?.includes('NGO') ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}>
-                  
-                  <div className="flex items-center gap-3 mb-2">
-                    <p className="text-xs font-bold uppercase tracking-wide opacity-90">{item.agent || 'Agent'}</p>
-                    {(() => {
-                      const act = (item.action || item.evaluation?.action || (item.evaluation?.is_accepted ? 'ACCEPT' : (item.round === 1 ? 'OFFER' : 'COUNTER'))).toUpperCase();
-                      const isNgo = item.agent?.includes('NGO');
-                      if (act === 'REJECT') {
-                        return <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wider shadow-sm ${isNgo ? 'bg-rose-500 text-white' : 'bg-rose-100 text-rose-800'}`}>REJECT</span>;
-                      }
-                      if (act === 'COUNTER') {
-                        return <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wider shadow-sm ${isNgo ? 'bg-amber-300 text-slate-900' : 'bg-amber-100 text-amber-800'}`}>COUNTER</span>;
-                      }
-                      if (act === 'ACCEPT') {
-                        return <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wider shadow-sm ${isNgo ? 'bg-emerald-300 text-slate-900' : 'bg-emerald-100 text-emerald-800'}`}>ACCEPT</span>;
-                      }
-                      return <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold tracking-wider shadow-sm ${isNgo ? 'bg-sky-300 text-slate-900' : 'bg-sky-100 text-sky-800'}`}>OFFER</span>;
-                    })()}
-                    {item.evaluation && (
-                      <span className="text-[11px] font-semibold opacity-80">Evaluation: {item.evaluation.satisfaction}%</span>
-                    )}
-                  </div>
 
-                  <p className="mt-1 text-sm leading-relaxed">{item.message}</p>
-                  
-                  {item.evaluation && (
-                    <div className="mt-4 mb-2 rounded-xl bg-slate-900/5 p-4">
-                      {item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0 && (
-  <div className="mb-4">
-    <p className="text-[10px] font-bold uppercase tracking-wider mb-2 opacity-70">
-      Proposed Allocation
-    </p>
+          {/* Timeline */}
+          <div className="relative">
+            {/* Vertical line */}
+            {history.length > 0 && (
+              <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-slate-200 rounded-full" />
+            )}
 
-    <div className="space-y-3">
-      {Object.entries(item.parsed_proposal).map(([key, value]) => {
-        // Gemini may return a multi-agent allocation
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-          return (
-            <div key={key}>
-              <p className="text-xs font-bold mb-2">
-                {key}
-              </p>
-
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(value).map(([res, amount]) => (
-                  <span
-                    key={`${key}-${res}`}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${
-                      item.agent?.includes('NGO')
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-white text-slate-800'
-                    }`}
-                  >
-                    {res}: {amount}
-                  </span>
-                ))}
-              </div>
-            </div>
-          );
-        }
-
-        // Normal flat proposal
-        return (
-          <span
-            key={key}
-            className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${
-              item.agent?.includes('NGO')
-                ? 'bg-blue-500 text-white'
-                : 'bg-white text-slate-800'
-            }`}
-          >
-            {key}: {value}
-          </span>
-        );
-      })}
-    </div>
-  </div>
-)}
-                      
-                      <div className="text-xs space-y-2 opacity-90">
-                        <p>
-                          <span className="font-semibold">Evaluation:</span> Satisfaction {item.evaluation.satisfaction}% is {item.evaluation.is_accepted ? 'above' : 'below'} the acceptance threshold ({item.evaluation.threshold}%) for round {item.round}/{maxRounds}.
-                          {item.evaluation.action === 'REJECT' && ` The agent rejects excessive allocations and counters: ${item.evaluation.trade_str}.`}
-                          {item.evaluation.action === 'COUNTER' && ` The agent negotiates concessions: ${item.evaluation.trade_str}.`}
-                          {item.evaluation.action === 'OFFER' && ` Opening baseline position established.`}
-                          {item.evaluation.action === 'ACCEPT' && (
-                            item === history[history.length - 1] && consensusReached
-                              ? ' Full consensus reached across all partners.'
-                              : ' Agent accepted the current proposal. Waiting for the remaining agents.'
-                          )}
-                        </p>
-                        
-                        {!item.evaluation.is_accepted && item.evaluation.adjustments && Object.keys(item.evaluation.adjustments).length > 0 && (
-                          <p><span className="font-semibold">Requested adjustment:</span> {
-                            Object.entries(item.evaluation.adjustments).map(([res, adj]) => `${res} ${adj > 0 ? '+'+adj : adj}`).join(' · ')
-                          }</p>
-                        )}
+            <div className="space-y-6">
+              {history.length === 0 ? (
+                /* Placeholder skeleton */
+                <div className="pl-8 space-y-4">
+                  {['Government Agent', 'NGO Agent', 'District Administration Agent'].map((name) => {
+                    const s = getAgentStyle(name);
+                    return (
+                      <div key={name} className={`rounded-2xl border ${s.border} ${s.bg} p-4 opacity-50`}>
+                        <div className={`text-xs font-bold uppercase tracking-wider mb-2 ${s.label}`}>{name}</div>
+                        <p className="text-sm text-slate-400 italic">Waiting for negotiation to begin...</p>
                       </div>
-                    </div>
-                  )}
-
-                  {item.reasoning && <p className="mt-3 text-xs italic opacity-80 border-t border-slate-900/10 pt-2">Reasoning: {item.reasoning}</p>}
+                    );
+                  })}
                 </div>
-              </div>
-            ))}
+              ) : (
+                history.map((item, i) => (
+                  <TranscriptEntry
+                    key={`${i}-${item.agent || ''}-${item.round}`}
+                    item={item}
+                    maxRounds={maxRounds}
+                    isLast={i === history.length - 1}
+                    consensusReached={consensusReached}
+                  />
+                ))
+              )}
+
+              {/* Loading pulse */}
+              {loading && (
+                <div className="pl-8">
+                  <div className="absolute left-0 top-auto w-3.5 h-3.5 rounded-full border-2 border-white bg-blue-400 animate-pulse" />
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 animate-pulse">
+                    <div className="h-3 w-24 bg-blue-200 rounded mb-3" />
+                    <div className="h-2 w-full bg-blue-100 rounded mb-2" />
+                    <div className="h-2 w-3/4 bg-blue-100 rounded" />
+                  </div>
+                </div>
+              )}
+
+              <div ref={transcriptEndRef} />
+            </div>
           </div>
         </div>
 
+        {/* ── Sidebar ── */}
         <div className="space-y-6">
+          {/* Resources */}
           <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-lg font-semibold text-slate-800">Resources Available</h3>
-            <div className="mt-4 space-y-2 text-sm text-slate-600">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Resources Available</h3>
+            <div className="space-y-2">
               {config?.resourceQuantities && Object.keys(config.resourceQuantities).length > 0 ? (
                 Object.entries(config.resourceQuantities).map(([resource, quantity]) => (
-                  <div key={resource} className="flex justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-                    <span className="font-medium text-slate-700">{resource}:</span>
+                  <div key={resource} className="flex justify-between rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+                    <span className="font-medium text-slate-700">{resource}</span>
                     <span className="font-semibold text-blue-600">{quantity} units</span>
                   </div>
                 ))
               ) : (
-                <p className="text-slate-600">Loading resources...</p>
+                <p className="text-sm text-slate-400">Loading resources...</p>
               )}
             </div>
           </div>
 
+          {/* System Status */}
           <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-lg font-semibold text-slate-800">System Status</h3>
-            <div className="mt-4 space-y-3">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">System Status</h3>
+            <div className="space-y-2">
               {[
                 ['FastAPI Backend', 'Connected'],
                 ['Negotiation Orchestrator', sessionId ? 'Active' : 'Starting'],
@@ -401,8 +521,33 @@ function NegotiationArena() {
                 ['Evaluation Engine', 'Active'],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
-                  <span className="text-slate-700">{name}</span>
-                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{value}</span>
+                  <span className="text-slate-600">{name}</span>
+                  <span className="rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 text-xs font-semibold">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Agent legend */}
+          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Agent Legend</h3>
+            <div className="space-y-2">
+              {[
+                { name: 'Government Agent', style: AGENT_STYLES.government },
+                { name: 'NGO Agent', style: AGENT_STYLES.ngo },
+                { name: 'District Administration', style: AGENT_STYLES.district },
+              ].map(({ name, style }) => (
+                <div key={name} className="flex items-center gap-2 text-sm">
+                  <span className={`w-3 h-3 rounded-full ${style.dot}`} />
+                  <span className="text-slate-600">{name}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Action types</p>
+              {Object.entries(ACTION_STYLES).map(([key, val]) => (
+                <div key={key} className="flex items-center gap-2">
+                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${val.cls}`}>{val.label}</span>
                 </div>
               ))}
             </div>
@@ -410,64 +555,76 @@ function NegotiationArena() {
         </div>
       </div>
 
+      {/* ── Final Report ── */}
       {(consensusReached || negotiationEnded) && (
         <div className="mt-8 rounded-[1.75rem] bg-emerald-50/80 p-6 sm:p-8">
-          <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl">
-            <CheckCircle size={24} /> Final Negotiation Report
+          <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl mb-2">
+            <CheckCircle size={24} />
+            Final Negotiation Report
           </div>
-            <p className="mt-2 text-sm text-emerald-700/80 mb-6 font-medium">
+          <p className="text-sm text-emerald-700/80 mb-6 font-medium">
             {consensusReached
-              ? 'The negotiation has concluded. Below is the summary of the opening positions and the final agreed allocation.'
+              ? 'The negotiation concluded successfully. Below are the opening positions and the final agreed allocation.'
               : 'The negotiation concluded without unanimous agreement.'}
           </p>
-          
+
           <div className="grid gap-6 lg:grid-cols-2">
-            <div>
-              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">INITIAL REQUIREMENTS (OPENING DEMANDS)</h3>
-              <div className="space-y-4">
-                {Object.entries(initialDemands).map(([agentName, demands]) => (
-                  <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm">
-                    <p className="text-sm font-bold text-slate-800 mb-3">{agentName}</p>
-                    <div className="flex flex-wrap gap-2">
-                      {demands && typeof demands === 'object' && !Array.isArray(demands) ? (
-                        isNestedAllocation(demands) ? (
-                          Object.entries(demands).map(([res, val]) => (
-                            <div key={res} className="w-full">
-                              <p className="text-sm font-bold text-slate-800 mb-2">{res}</p>
-                              <div className="flex flex-wrap gap-2">
-                                {Object.entries(val).map(([resource, amount]) => (
-                                  <span key={`${res}-${resource}`} className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
-                                    {resource}: {amount}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          Object.entries(demands).map(([res, val]) => (
-                            <span key={res} className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
-                              {res}: {val}
-                            </span>
-                          ))
-                        )
-                      ) : (
-                        <span className="border border-slate-200 text-slate-600 rounded-md px-3 py-1.5 text-xs font-medium">
-                          {demands}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            
+            {/* Opening demands */}
             <div>
               <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
-                {consensusReached ? 'FINAL AGREED ALLOCATION' : 'NO AGREEMENT REACHED'}
+                Initial Requirements (Opening Demands)
               </h3>
-              <div className="bg-[#009A65] text-white rounded-2xl p-6 shadow-md min-h-[160px] flex flex-col justify-start">
+              <div className="space-y-4">
+                {Object.entries(initialDemands).map(([agentName, demands]) => {
+                  const s = getAgentStyle(agentName);
+                  return (
+                    <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
+                        <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {demands && typeof demands === 'object' && !Array.isArray(demands) ? (
+                          isNestedAllocation(demands) ? (
+                            Object.entries(demands).map(([res, val]) => (
+                              <div key={res} className="w-full">
+                                <p className="text-xs font-bold text-slate-700 mb-1">{res}</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {Object.entries(val).map(([resource, amount]) => (
+                                    <span key={`${res}-${resource}`} className={`text-xs font-medium rounded-md px-2.5 py-1 ${s.chip}`}>
+                                      {resource}: {amount}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            Object.entries(demands).map(([res, val]) => (
+                              <span key={res} className={`text-xs font-medium rounded-md px-2.5 py-1 ${s.chip}`}>
+                                {res}: {val}
+                              </span>
+                            ))
+                          )
+                        ) : (
+                          <span className="text-xs text-slate-500">{demands}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Final allocation */}
+            <div>
+              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+                {consensusReached ? 'Final Agreed Allocation' : 'No Agreement Reached'}
+              </h3>
+              <div className="bg-[#009A65] text-white rounded-2xl p-6 shadow-md min-h-[160px]">
                 <p className="text-sm font-medium text-emerald-50 mb-5">
-                  This allocation was reached at the end of the negotiation:
+                  {consensusReached
+                    ? 'This allocation was unanimously agreed upon:'
+                    : 'No valid allocation was reached.'}
                 </p>
                 {Object.keys(agreedAllocation).length > 0 ? (
                   isNestedAllocation(agreedAllocation) ? (

@@ -19,5 +19,10 @@ class BaseAgent:
         prompt = self.system_prompt(context.get("scenario", {})) + "\n"
         prompt += f"Personality: {self.personality}. Previous messages: {context.get('history', [])}\n"
         # Use gemini_ask to generate message; fallback to deterministic stub
-        result = await gemini_ask(prompt)
+        result = await gemini_ask(
+            prompt,
+            max_rounds=context.get("max_rounds", 5),
+            scenario=context.get("scenario", {}),
+            stubborn_until=context.get("stubborn_until")
+        )
         return result
