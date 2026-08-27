@@ -73,6 +73,64 @@ function getActionStyle(action) {
 }
 
 // ─────────────────────────────────────────────
+// Renders a proposal as clean chips — handles both
+// flat ({Food: 280}) and per-district nested
+// ({ "Riverbend District": { Food: 280, ... } }) shapes
+// ─────────────────────────────────────────────
+function AllocationBreakdown({ proposal, style }) {
+  if (!proposal || Object.keys(proposal).length === 0) return null;
+
+  const isNested = Object.values(proposal).some(
+    (v) => v && typeof v === 'object' && !Array.isArray(v)
+  );
+
+  if (!isNested) {
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {Object.entries(proposal).map(([resource, amount]) => (
+          <span key={resource} className={`text-xs font-semibold rounded-full px-3 py-1 ${style.chip}`}>
+            {resource}: {amount}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {Object.entries(proposal).map(([area, resources]) => (
+        <div key={area} className="rounded-xl bg-white border border-slate-200 p-3">
+          <p className="text-xs font-bold text-slate-700 mb-2">{area}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(resources).map(([resource, amount]) => (
+              <span key={resource} className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${style.chip}`}>
+                {resource}: {amount}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Cuts the narrative message off right before the raw
+// "X District Allocation: Food: N units..." text starts,
+// since that part is now shown as structured chips instead.
+function splitMessage(message) {
+  if (!message) return { summary: '', full: '', hasMore: false };
+  const cutMatch = message.match(/\b[A-Z][A-Za-z\s]+ Allocation:/);
+  if (cutMatch && cutMatch.index > 20) {
+    return {
+      summary: message.slice(0, cutMatch.index).trim(),
+      full: message,
+      hasMore: true,
+    };
+  }
+  return { summary: message, full: message, hasMore: false };
+}
+
+// ─────────────────────────────────────────────
 // Single transcript entry card
 // ─────────────────────────────────────────────
 function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
@@ -80,29 +138,22 @@ function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
   const style = getAgentStyle(item.agent);
   const actionStyle = getActionStyle(item.action);
   const hasProposal = item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0;
-  const hasReasoning = item.reasoning && item.reasoning.trim().length > 0;
-  const hasEvaluation = item.evaluation;
 
-  // Build the round label: prefer backend-generated, else derive
   const roundLabel = item.round_label || `Round ${item.round} — ${item.agent || 'Agent'} responds`;
-
-  const displayMessage = item.speech || item.message || '';
+  const rawMessage = item.speech || item.message || '';
+  const { summary, full, hasMore } = splitMessage(rawMessage);
 
   return (
     <div className="relative pl-8">
-      {/* Timeline dot */}
       <div className={`absolute left-0 top-5 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${style.dot}`} />
 
-      {/* Round label separator */}
       <div className="mb-2">
         <span className="inline-block text-[11px] font-bold uppercase tracking-widest text-slate-400 select-none">
           {roundLabel}
         </span>
       </div>
 
-      {/* Agent card */}
       <div className={`rounded-2xl border ${style.border} ${style.bg} overflow-hidden shadow-sm`}>
-        {/* Card header */}
         <div className={`flex items-center gap-3 px-4 py-2.5 ${style.headerBg}`}>
           <span className={`text-xs font-extrabold tracking-wider ${style.headerText} uppercase`}>
             {item.agent || 'Agent'}
@@ -112,38 +163,34 @@ function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
           </span>
         </div>
 
-        {/* Main speech bubble */}
+        {/* Narrative message — trimmed of raw allocation text */}
         <div className="px-4 py-3">
           <p className={`text-sm leading-relaxed ${style.label} font-medium`}>
-            {displayMessage || <em className="opacity-50">Waiting for response...</em>}
+            {(expanded ? full : summary) || <em className="opacity-50">Waiting for response...</em>}
           </p>
+          {hasMore && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="mt-1 text-xs font-semibold text-slate-400 hover:text-slate-600 underline"
+            >
+              {expanded ? 'Show less' : 'Show full statement'}
+            </button>
+          )}
         </div>
 
-        {/* Resource allocation chips — only this agent's own proposal */}
+        {/* Structured allocation — per-district cards or flat chips */}
         {hasProposal && (
           <div className="px-4 pb-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-              Resource request
+              Proposed Allocation
             </p>
-            <div className="flex flex-wrap gap-1.5">
-              {Object.entries(item.parsed_proposal).map(([resource, amount]) => {
-                // Skip nested (multi-agent) allocations — show flat only
-                if (typeof amount === 'object') return null;
-                return (
-                  <span key={resource} className={`text-xs font-semibold rounded-full px-3 py-1 ${style.chip}`}>
-                    {resource}: {amount}
-                  </span>
-                );
-              })}
-            </div>
+            <AllocationBreakdown proposal={item.parsed_proposal} style={style} />
           </div>
         )}
-
       </div>
     </div>
   );
 }
-
 // ─────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────
