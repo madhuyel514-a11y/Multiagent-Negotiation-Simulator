@@ -266,7 +266,45 @@ def _extract_resource_quantities(prompt):
     return quantities
 
 
-def _validate_response_resources(message, allowed_resources, resource_quantities=None):
+def _extract_recipient_allocations(message, recipient_names, resource_quantities):
+    if not message or not recipient_names or not resource_quantities:
+        return {}
+
+    recipient_pattern = "|".join(
+        re.escape(name) for name in sorted(recipient_names, key=len, reverse=True)
+    )
+    headers = list(re.finditer(
+        rf"(?<![\w])(?P<recipient>{recipient_pattern})(?:'s)?\s+"
+        rf"(?:allocation|distribution)\s*:",
+        str(message),
+        re.IGNORECASE,
+    ))
+    allocations = {}
+    for index, header in enumerate(headers):
+        recipient = next(
+            name for name in recipient_names
+            if name.lower() == header.group("recipient").lower()
+        )
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(str(message))
+        section = str(message)[header.end():end]
+        allocations[recipient] = {}
+        for resource in resource_quantities:
+            match = re.search(
+                rf"(?<![\w]){re.escape(resource)}\s*:\s*(\d+)\s*(?:units?|qty\.?|quantity)?",
+                section,
+                re.IGNORECASE,
+            )
+            if match:
+                allocations[recipient][resource] = int(match.group(1))
+    return allocations
+
+
+def _validate_response_resources(
+    message,
+    allowed_resources,
+    resource_quantities=None,
+    recipient_names=None,
+):
     """
     Ensure every proposed resource is explicit, allowed, within limits,
     and has a non-zero quantity for any resource that is actually available.
@@ -287,6 +325,33 @@ def _validate_response_resources(message, allowed_resources, resource_quantities
     if not resource_entries:
         print("RESOURCE VALIDATION FAILED: No explicit resource quantities found")
         return False
+
+    recipient_allocations = _extract_recipient_allocations(
+        message,
+        recipient_names,
+        resource_quantities,
+    )
+    if recipient_allocations:
+        for resource in allowed_resources:
+            resource_key = resource.strip().lower()
+            quantities = [
+                quantity
+                for allocation in recipient_allocations.values()
+                for name, quantity in allocation.items()
+                if name.strip().lower() == resource_key
+            ]
+            if not quantities:
+                print(f"RESOURCE VALIDATION FAILED: Missing explicit quantity for {resource}")
+                return False
+            if any(quantity < 0 for quantity in quantities):
+                print(f"RESOURCE VALIDATION FAILED: Negative quantity for {resource}")
+                return False
+            if resource_quantities:
+                available = resource_quantities.get(resource_key, 0)
+                if sum(quantities) > available:
+                    print(f"RESOURCE VALIDATION FAILED: Total quantity exceeds available amount for {resource}")
+                    return False
+        return True
 
     parsed = {name.strip().lower(): int(quantity) for name, quantity in resource_entries}
 
@@ -731,14 +796,30 @@ Return ONLY valid JSON:
                         message,
                         re.IGNORECASE,
                     )
+                        recipient_names = [
+                            recipient.get("name")
+                            for recipient in (scenario or {}).get("recipients", [])
+                            if recipient.get("name")
+                        ]
+                        extracted_proposal = _extract_recipient_allocations(
+                            message,
+                            recipient_names,
+                            resource_quantities,
+                        )
+                        if not extracted_proposal:
+                            extracted_proposal = {
+                                name.strip(): int(quantity)
+                                for name, quantity in entries
+                            }
                         print(
                             "[GEMINI] extracted_proposal="
-                            + str({name.strip(): int(quantity) for name, quantity in entries})
+                            + str(extracted_proposal)
                         )
                         is_valid = _validate_response_resources(
                             message,
                             allowed_resources,
-                            resource_quantities
+                            resource_quantities,
+                            recipient_names,
                         )
 
                         if is_valid:
