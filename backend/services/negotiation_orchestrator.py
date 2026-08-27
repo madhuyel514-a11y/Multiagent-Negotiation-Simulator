@@ -381,7 +381,7 @@ class NegotiationOrchestrator:
     ) -> dict:
         """
         Extract resource: N units patterns from a message.
-        Returns a dict like {"Rescue Teams": 25, "Medical Aid": 18, ...}
+        Returns a recipient-level dict when configured recipients are present.
         Only includes resources that exist in resource_quantities.
         """
 
@@ -396,45 +396,36 @@ class NegotiationOrchestrator:
         ]
 
         sections = {}
-        current_agent = None
-        detailed_section_found = False
-        for line in str(message).splitlines():
-            header = line.strip().lstrip("#-* ").rstrip(":").strip()
-            matched_agent = next(
-                (
-                    name for name in configured_agents
-                    if re.match(
-                        rf"^{re.escape(name)}(?:'s)?\s+allocation$|^{re.escape(name)}$",
-                        header,
-                        re.IGNORECASE,
-                    )
-                ),
-                None,
+        recipient_pattern = "|".join(
+            re.escape(name) for name in sorted(configured_agents, key=len, reverse=True)
+        )
+        header_matches = list(re.finditer(
+            rf"(?<![\w])(?P<recipient>{recipient_pattern})(?:'s)?"
+            rf"(?:\s+(?:allocation|distribution))?\s*:",
+            str(message),
+            re.IGNORECASE,
+        ))
+
+        for index, header_match in enumerate(header_matches):
+            recipient = next(
+                name for name in configured_agents
+                if name.lower() == header_match.group("recipient").lower()
             )
-            if matched_agent:
-                current_agent = matched_agent
-                detailed_section_found = True
-                sections.setdefault(current_agent, {})
-                continue
-            if current_agent and re.search(
-                r"total\s+(resource\s+distribution|allocation)",
-                header,
-                re.IGNORECASE,
-            ):
-                current_agent = None
-                continue
-            if current_agent:
-                match = re.match(
-                    r"^[-*]?\s*([^:]+?)\s*:\s*(\d+)\s*(?:units?)?\s*$",
-                    line,
+            section_end = (
+                header_matches[index + 1].start()
+                if index + 1 < len(header_matches)
+                else len(str(message))
+            )
+            section = str(message)[header_match.end():section_end]
+            allocation = sections.setdefault(recipient, {})
+            for resource in resource_quantities:
+                resource_match = re.search(
+                    rf"(?<![\w]){re.escape(resource)}\s*:\s*(\d+)\s*(?:units?)?",
+                    section,
                     re.IGNORECASE,
                 )
-                if match:
-                    name, qty = match.groups()
-                    for resource in resource_quantities:
-                        if resource.lower() == name.strip().lower():
-                            sections[current_agent][resource] = int(qty)
-                            break
+                if resource_match:
+                    allocation[resource] = int(resource_match.group(1))
 
         if len(sections) == len(configured_agents) and all(
             sections.get(name) for name in configured_agents
@@ -448,13 +439,9 @@ class NegotiationOrchestrator:
                 for name in configured_agents
                 for resource, available in resource_quantities.items()
             )
-            totals_valid = all(
-                sum(sections[name].get(resource, 0) for name in configured_agents) == available
-                for resource, available in resource_quantities.items()
-            )
-            return sections if complete and values_valid and totals_valid else {}
+            return sections if complete and values_valid else {}
 
-        if detailed_section_found:
+        if header_matches:
             return {}
 
         matches = re.findall(

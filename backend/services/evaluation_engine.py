@@ -258,12 +258,20 @@ def generate_turn_evaluation(
     if not isinstance(agent_allocation, dict):
         agent_allocation = {}
 
+    recipient_allocations = (
+        list(proposal.values())
+        if isinstance(proposal, dict)
+        and proposal
+        and all(isinstance(allocation, dict) for allocation in proposal.values())
+        else [agent_allocation]
+    )
     invalid = any(
         resource not in known_resources
         or not isinstance(quantity, (int, float))
         or quantity < 0
         or quantity > resource_quantities.get(resource, 0)
-        for resource, quantity in agent_allocation.items()
+        for allocation in recipient_allocations
+        for resource, quantity in allocation.items()
     )
 
     if not proposal:
@@ -309,11 +317,12 @@ def generate_turn_evaluation(
 
     # Determine global state validity
     is_valid_global_state = True
-    if isinstance(new_proposal, dict):
+    proposal_to_validate = new_proposal if new_proposal else proposal
+    if isinstance(proposal_to_validate, dict):
         for res, available in resource_quantities.items():
             total_req = sum(
                 alloc.get(res, 0)
-                for name, alloc in new_proposal.items()
+                for name, alloc in proposal_to_validate.items()
                 if isinstance(alloc, dict)
             )
             if total_req > available:
