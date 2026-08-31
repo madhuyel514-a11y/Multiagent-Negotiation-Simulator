@@ -6,6 +6,8 @@ function ScenarioSelection() {
   const navigate = useNavigate();
 
   const handleSelectScenario = (scenario) => {
+    const selectedMode = localStorage.getItem('selectedMode') || 'ai';
+    localStorage.setItem('selectedMode', selectedMode);
     localStorage.setItem('selectedScenario', JSON.stringify(scenario));
     navigate('/configure');
   };

@@ -14,6 +14,7 @@ function AgentConfiguration() {
 
   useEffect(() => {
     const storedScenario = localStorage.getItem('selectedScenario');
+    const storedMode = localStorage.getItem('selectedMode') || 'ai';
     if (storedScenario) {
       const parsedScenario = JSON.parse(storedScenario);
       setSelectedScenario(parsedScenario);
@@ -130,6 +131,8 @@ function AgentConfiguration() {
         id: agent.id,
         name: agent.name,
         role: agent.role,
+        goal: agent.goal,
+        constraints: agent.constraints,
         personality: personalities[agent.id],
       })),
       max_rounds: maxRounds,
@@ -137,7 +140,9 @@ function AgentConfiguration() {
     };
 
     localStorage.setItem('negotiationConfig', JSON.stringify(negotiationConfig));
-    navigate('/negotiation');
+
+    const selectedMode = localStorage.getItem('selectedMode') || 'ai';
+    navigate(selectedMode === 'practice' ? '/practice' : '/negotiation');
   };
 
   if (!selectedScenario) {

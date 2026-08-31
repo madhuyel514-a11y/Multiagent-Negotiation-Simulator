@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Send,
   Check,
@@ -10,15 +11,69 @@ import {
 import { scenarios } from '../data/scenarios';
 
 const API_URL = 'http://127.0.0.1:8000';
-const MAX_ROUNDS = 5;
 
 function PracticeMode() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const storedMode = localStorage.getItem('selectedMode');
+    const storedScenario = localStorage.getItem('selectedScenario');
+    const storedConfig = localStorage.getItem('negotiationConfig');
+
+    if (storedMode !== 'practice' || !storedScenario || !storedConfig) {
+      localStorage.setItem('selectedMode', 'practice');
+      navigate('/scenarios');
+      return;
+    }
+  }, [navigate]);
+
   // --------------------------------------------------
   // GET INITIAL SCENARIO
   // --------------------------------------------------
 
+  const getSavedNegotiationConfig = () => {
+    try {
+      const savedConfig = localStorage.getItem('negotiationConfig');
+      if (!savedConfig) return null;
+
+      const parsedConfig = JSON.parse(savedConfig);
+      if (!parsedConfig || typeof parsedConfig !== 'object') {
+        return null;
+      }
+
+      return parsedConfig;
+    } catch (error) {
+      console.error(
+        'Error loading negotiation config:',
+        error
+      );
+      return null;
+    }
+  };
+
+  const getConfiguredMaxRounds = (config) => {
+    const rawMaxRounds = config && config.max_rounds;
+
+    if (rawMaxRounds !== undefined && rawMaxRounds !== null && rawMaxRounds !== '') {
+      const parsed = Number(rawMaxRounds);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+
+    return 5;
+  };
+
   const getInitialScenario = () => {
     try {
+      const savedConfig = getSavedNegotiationConfig();
+      if (savedConfig?.scenario) {
+        const scenario = savedConfig.scenario;
+        if (scenario && typeof scenario === 'object') {
+          return scenario;
+        }
+      }
+
       const savedScenario =
         localStorage.getItem('selectedScenario');
 
@@ -35,6 +90,10 @@ function PracticeMode() {
         if (matchingScenario) {
           return matchingScenario;
         }
+
+        if (parsedScenario && typeof parsedScenario === 'object') {
+          return parsedScenario;
+        }
       }
     } catch (error) {
       console.error(
@@ -43,31 +102,58 @@ function PracticeMode() {
       );
     }
 
-    return scenarios[0];
+    return null;
   };
 
   const initialScenario = getInitialScenario();
+
+  const getStoredConfig = () => {
+    const savedConfig = getSavedNegotiationConfig();
+    const scenario = initialScenario || getInitialScenario();
+    const configuredMaxRounds = getConfiguredMaxRounds(savedConfig);
+
+    if (savedConfig?.scenario && typeof savedConfig.scenario === 'object') {
+      return {
+        scenario: savedConfig.scenario,
+        agents: Array.isArray(savedConfig.agents)
+          ? savedConfig.agents
+          : savedConfig.scenario.agents || [],
+        max_rounds: configuredMaxRounds,
+        resourceQuantities:
+          savedConfig.resourceQuantities || savedConfig.scenario.resourceQuantities || {},
+      };
+    }
+
+    if (scenario) {
+      return {
+        scenario,
+        agents: Array.isArray(scenario.agents) ? scenario.agents : [],
+        max_rounds: configuredMaxRounds,
+        resourceQuantities: scenario.resourceQuantities || {},
+      };
+    }
+
+    return null;
+  };
 
   // --------------------------------------------------
   // RESOURCE HELPER
   // --------------------------------------------------
 
   const getResources = (scenario) => {
-    if (!scenario?.resources) {
-      return [
-        'Water',
-        'Food',
-        'Medical Kits',
-        'Tents',
-        'Blankets',
-      ];
+    if (!scenario || typeof scenario !== 'object') {
+      return [];
     }
 
     if (Array.isArray(scenario.resources)) {
       return scenario.resources.slice(0, 5);
     }
 
-    return Object.keys(scenario.resources).slice(0, 5);
+    if (scenario.resourceQuantities && typeof scenario.resourceQuantities === 'object') {
+      return Object.keys(scenario.resourceQuantities).slice(0, 5);
+    }
+
+    return [];
   };
 
   // --------------------------------------------------
@@ -77,8 +163,14 @@ function PracticeMode() {
   const [selectedScenario, setSelectedScenario] =
     useState(initialScenario);
 
+  const [savedConfig, setSavedConfig] = useState(
+    getStoredConfig()
+  );
+
+  const totalRounds = getConfiguredMaxRounds(savedConfig);
+
   const [resource, setResource] = useState(
-    getResources(initialScenario)[0] || 'Water'
+    getResources(initialScenario)[0] || ''
   );
 
   const [amount, setAmount] = useState('');
@@ -114,9 +206,35 @@ function PracticeMode() {
 
   const startSession = async (scenario) => {
     try {
+      const configuredScenario =
+        (savedConfig && savedConfig.scenario) || scenario || selectedScenario;
+
+      if (!configuredScenario || typeof configuredScenario !== 'object') {
+        setStatus('No scenario configured');
+        setSessionStatus('Inactive');
+        setMessages([
+          {
+            sender: 'System',
+            text: 'No valid scenario is configured. Please select a scenario in the configuration step before starting practice mode.',
+          },
+        ]);
+        return;
+      }
+
       setLoading(true);
       setStatus('Starting practice...');
       setSessionStatus('Active');
+
+      const configuredAgents =
+        (savedConfig && Array.isArray(savedConfig.agents) && savedConfig.agents.length > 0)
+          ? savedConfig.agents
+          : configuredScenario?.agents || [];
+
+      const configuredResourceQuantities =
+        (savedConfig && savedConfig.resourceQuantities) ||
+        configuredScenario?.resourceQuantities || {};
+
+      const configuredMaxRounds = getConfiguredMaxRounds(savedConfig);
 
       const response = await fetch(
         `${API_URL}/api/negotiation/start`,
@@ -126,10 +244,11 @@ function PracticeMode() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            scenario: scenario,
-            agents: scenario.agents || [],
+            scenario: configuredScenario,
+            agents: configuredAgents,
             config: {
-              max_rounds: MAX_ROUNDS,
+              max_rounds: configuredMaxRounds,
+              resourceQuantities: configuredResourceQuantities,
             },
           }),
         }
@@ -200,6 +319,19 @@ function PracticeMode() {
     }
 
     autoStartRef.current = true;
+
+    if (!initialScenario) {
+      setStatus('No scenario configured');
+      setSessionStatus('Inactive');
+      setMessages([
+        {
+          sender: 'System',
+          text: 'No valid negotiation scenario is configured. Please complete the scenario setup first.',
+        },
+      ]);
+      return;
+    }
+
     startSession(initialScenario);
   }, []);
 
@@ -218,18 +350,33 @@ function PracticeMode() {
       return;
     }
 
+    const nextMaxRounds = getConfiguredMaxRounds(savedConfig);
+
     setSelectedScenario(scenario);
+    setSavedConfig({
+      scenario,
+      agents: scenario.agents || [],
+      max_rounds: nextMaxRounds,
+      resourceQuantities: scenario.resourceQuantities || {},
+    });
 
     localStorage.setItem(
       'selectedScenario',
       JSON.stringify(scenario)
     );
+    localStorage.setItem(
+      'negotiationConfig',
+      JSON.stringify({
+        scenario,
+        agents: scenario.agents || [],
+        max_rounds: nextMaxRounds,
+        resourceQuantities: scenario.resourceQuantities || {},
+      })
+    );
 
     const resources = getResources(scenario);
 
-    setResource(
-      resources[0] || 'Water'
-    );
+    setResource(resources[0] || '');
 
     setAmount('');
 
@@ -327,7 +474,7 @@ function PracticeMode() {
         setRound(
           Math.min(
             Number(data.round),
-            MAX_ROUNDS
+            totalRounds
           )
         );
       }
@@ -686,7 +833,7 @@ function PracticeMode() {
           <div className="flex flex-wrap gap-3">
 
             <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
-              Round {round}/{MAX_ROUNDS}
+              Round {round}/{totalRounds}
             </span>
 
             <span className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
