@@ -7,7 +7,7 @@ from agents.government_agent import GovernmentAgent
 from agents.ngo_agent import NGOAgent
 from agents.district_agent import DistrictAdministrationAgent
 
-from services.gemini_service import ask_model
+from services.gemini_service import ask_model, get_gemini_metrics
 from services.evaluation_engine import calculate_consensus, detect_deadlock, generate_turn_evaluation, _resource_priority
 
 
@@ -1121,5 +1121,7 @@ class NegotiationOrchestrator:
 
             "agreed_agents": len(state.get("accepted_proposals", {})),
 
-            "total_agents": len(state.get("agents", []))
+            "total_agents": len(state.get("agents", [])),
+
+            "gemini_metrics": get_gemini_metrics()
         }

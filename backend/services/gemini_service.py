@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 
 from dotenv import load_dotenv
 from google import genai
@@ -8,6 +9,115 @@ from google import genai
 load_dotenv()
 
 import itertools
+
+_GEMINI_METRICS = {
+    "total_requests": 0,
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "total_tokens": 0,
+    "total_latency": 0.0,
+}
+
+
+def get_gemini_metrics():
+    total_requests = _GEMINI_METRICS["total_requests"]
+    return {
+        "total_requests": total_requests,
+        "total_input_tokens": _GEMINI_METRICS["total_input_tokens"],
+        "total_output_tokens": _GEMINI_METRICS["total_output_tokens"],
+        "total_tokens": _GEMINI_METRICS["total_tokens"],
+        "total_latency": _GEMINI_METRICS["total_latency"],
+        "average_latency": (
+            _GEMINI_METRICS["total_latency"] / total_requests
+            if total_requests
+            else 0.0
+        ),
+    }
+
+
+def _friendly_agent_name(agent_name=None, fallback_agent=None):
+    if agent_name and str(agent_name).strip():
+        return str(agent_name).strip()
+
+    fallback = (fallback_agent or "").strip().lower()
+    mapping = {
+        "government": "Government Agent",
+        "ngo": "NGO Agent",
+        "district": "District Administration Agent",
+    }
+    return mapping.get(fallback, fallback.title() if fallback else "Unknown Agent")
+
+
+def _usage_metadata_values(usage_metadata):
+    if usage_metadata is None:
+        return 0, 0, 0
+
+    if hasattr(usage_metadata, "model_dump"):
+        metadata = usage_metadata.model_dump(exclude_none=True)
+    elif hasattr(usage_metadata, "to_dict"):
+        metadata = usage_metadata.to_dict()
+    elif isinstance(usage_metadata, dict):
+        metadata = usage_metadata
+    else:
+        metadata = {
+            "prompt_token_count": getattr(usage_metadata, "prompt_token_count", None),
+            "response_token_count": getattr(usage_metadata, "response_token_count", None),
+            "candidates_token_count": getattr(usage_metadata, "candidates_token_count", None),
+            "total_token_count": getattr(usage_metadata, "total_token_count", None),
+        }
+
+    input_tokens = (
+        metadata.get("prompt_token_count")
+        or metadata.get("input_token_count")
+        or metadata.get("prompt_tokens")
+        or metadata.get("input_tokens")
+        or 0
+    )
+    output_tokens = (
+        metadata.get("candidates_token_count")
+        or metadata.get("response_token_count")
+        or metadata.get("output_token_count")
+        or metadata.get("completion_tokens")
+        or metadata.get("output_tokens")
+        or 0
+    )
+    total_tokens = (
+        metadata.get("total_token_count")
+        or metadata.get("total_tokens")
+        or (int(input_tokens or 0) + int(output_tokens or 0))
+    )
+
+    return int(input_tokens or 0), int(output_tokens or 0), int(total_tokens or 0)
+
+
+def _record_successful_gemini_metrics(agent_name, current_round, model_name, latency_seconds, usage_metadata):
+    input_tokens, output_tokens, total_tokens = _usage_metadata_values(usage_metadata)
+
+    _GEMINI_METRICS["total_requests"] += 1
+    _GEMINI_METRICS["total_input_tokens"] += input_tokens
+    _GEMINI_METRICS["total_output_tokens"] += output_tokens
+    _GEMINI_METRICS["total_tokens"] += total_tokens
+    _GEMINI_METRICS["total_latency"] += latency_seconds
+
+    total_requests = _GEMINI_METRICS["total_requests"]
+    average_latency = (
+        _GEMINI_METRICS["total_latency"] / total_requests if total_requests else 0.0
+    )
+
+    print(
+        f"[GEMINI_METRICS] agent={_friendly_agent_name(agent_name, fallback_agent='')} "
+        f"round={current_round} model={model_name} latency={latency_seconds:.2f}s "
+        f"input_tokens={input_tokens} output_tokens={output_tokens} total_tokens={total_tokens}"
+    )
+    print(
+        f"[GEMINI_METRICS_SUMMARY] total_requests={total_requests} "
+        f"total_input_tokens={_GEMINI_METRICS['total_input_tokens']} "
+        f"total_output_tokens={_GEMINI_METRICS['total_output_tokens']} "
+        f"total_tokens={_GEMINI_METRICS['total_tokens']} "
+        f"total_api_latency={_GEMINI_METRICS['total_latency']:.2f}s "
+        f"average_latency={average_latency:.2f}s"
+    )
+
 
 API_KEY = os.getenv("GEMINI_API_KEY")
 API_KEYS_STR = os.getenv("GEMINI_API_KEYS")
@@ -743,11 +853,14 @@ Return ONLY valid JSON:
         for model_name in models:
 
             try:
+                start_time = time.perf_counter()
 
                 response = client.models.generate_content(
                     model=model_name,
                     contents=instruction
                 )
+                latency_seconds = time.perf_counter() - start_time
+                usage_metadata = getattr(response, "usage_metadata", None)
 
                 text = getattr(
                     response,
@@ -825,6 +938,13 @@ Return ONLY valid JSON:
                         if is_valid:
                             print(f"[GEMINI] key {client_index} succeeded")
                             print(f"[GEMINI] extracted_proposal=validated_from_message")
+                            _record_successful_gemini_metrics(
+                                agent_name=agent_name or current_agent,
+                                current_round=current_round,
+                                model_name=model_name,
+                                latency_seconds=latency_seconds,
+                                usage_metadata=usage_metadata,
+                            )
                             return {
                                 "action": action,
                                 "message": message,

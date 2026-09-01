@@ -60,6 +60,15 @@ const ACTION_STYLES = {
   ACCEPT: { cls: 'bg-emerald-100 text-emerald-800', label: 'ACCEPTS' },
 };
 
+const INITIAL_GEMINI_METRICS = {
+  total_requests: 0,
+  total_input_tokens: 0,
+  total_output_tokens: 0,
+  total_tokens: 0,
+  total_latency: 0,
+  average_latency: 0,
+};
+
 function getAgentStyle(agentName) {
   const n = (agentName || '').toLowerCase();
   if (n.includes('government')) return AGENT_STYLES.government;
@@ -211,6 +220,7 @@ function NegotiationArena() {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [isAutoRunning, setIsAutoRunning] = useState(false);
+  const [geminiMetrics, setGeminiMetrics] = useState(INITIAL_GEMINI_METRICS);
   const startedRef = useRef(false);
   const transcriptEndRef = useRef(null);
 
@@ -249,6 +259,7 @@ function NegotiationArena() {
     setFinalAllocation(state.final_allocation ?? data?.final_allocation ?? null);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
+    if (data?.gemini_metrics) setGeminiMetrics(data.gemini_metrics);
   };
 
   const startSession = async () => {
@@ -322,6 +333,7 @@ function NegotiationArena() {
   const reset = async () => {
     if (!scenario || !config) return;
     setIsAutoRunning(false);
+    setGeminiMetrics(INITIAL_GEMINI_METRICS);
     setLoading(true);
     setApiError(null);
     try {
@@ -570,6 +582,26 @@ function NegotiationArena() {
                 <div key={name} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
                   <span className="text-slate-600">{name}</span>
                   <span className="rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 text-xs font-semibold">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* LLM metrics */}
+          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">LLM Metrics</h3>
+            <div className="space-y-2">
+              {[
+                ['API Requests', geminiMetrics.total_requests],
+                ['Input Tokens', geminiMetrics.total_input_tokens],
+                ['Output Tokens', geminiMetrics.total_output_tokens],
+                ['Total Tokens', geminiMetrics.total_tokens],
+                ['Average Latency', `${Number(geminiMetrics.average_latency || 0).toFixed(2)}s`],
+                ['Total API Latency', `${Number(geminiMetrics.total_latency || 0).toFixed(2)}s`],
+              ].map(([name, value]) => (
+                <div key={name} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
+                  <span className="text-slate-600">{name}</span>
+                  <span className="font-semibold text-slate-800">{value}</span>
                 </div>
               ))}
             </div>
