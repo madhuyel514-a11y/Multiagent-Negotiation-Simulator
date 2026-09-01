@@ -140,6 +140,43 @@ def detect_deadlock(
     if len(set(recent)) == 1 and recent[0]:
         return True
 
+    # Explicit check: the last full round of agents all COUNTERed again
+    # with the exact same allocation they proposed the round before
+    # (not just similar wording — an unchanged parsed_proposal).
+    round_start_index = len(history) - agent_count
+    recent_round = history[round_start_index:]
+
+    if len(recent_round) == agent_count and all(
+        entry.get("action") == "COUNTER" for entry in recent_round
+    ):
+        all_unchanged = True
+
+        for offset, entry in enumerate(recent_round):
+            entry_index = round_start_index + offset
+            agent_name = entry.get("agent")
+            current_proposal = entry.get("parsed_proposal") or {}
+
+            prior_entry = next(
+                (
+                    item for item in reversed(history[:entry_index])
+                    if item.get("agent") == agent_name
+                ),
+                None,
+            )
+
+            if prior_entry is None:
+                all_unchanged = False
+                break
+
+            prior_proposal = prior_entry.get("parsed_proposal") or {}
+
+            if current_proposal != prior_proposal:
+                all_unchanged = False
+                break
+
+        if all_unchanged:
+            return True
+
     last_proposals = state.get("last_proposals", {})
     if len(last_proposals) < 2:
         return False

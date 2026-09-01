@@ -179,6 +179,12 @@ class NegotiationOrchestrator:
 
             "status": "ongoing",
 
+            # GAP 2/3: deadlock-detection bookkeeping
+            "prev_proposals": {},
+            "deadlock_detected": False,
+            "resolution_attempted": False,
+            "resolution_succeeded": False,
+
             "max_rounds": max_rounds,
             
             "stubborn_until": __import__("random").randint(2, max(2, max_rounds - 1))
@@ -257,6 +263,28 @@ class NegotiationOrchestrator:
             human_message or ""
         ).strip()
 
+        normalized_action = str(action or "Offer").strip().upper()
+        if normalized_action not in ("OFFER", "COUNTER", "ACCEPT", "REJECT"):
+            normalized_action = "OFFER"
+
+        # -----------------------------------------------------
+        # GAP 1 FIX: build a structured proposal dict in the same
+        # shape used for AI turns (state["current_proposal"] /
+        # state["last_proposals"][agent_name]) instead of only
+        # ever appending free text to history. Without this the
+        # next AI agent only "sees" the human's offer if the LLM
+        # happens to parse it back out of the text blob.
+        # -----------------------------------------------------
+
+        resource_quantities = state.get("resource_quantities", {})
+        structured_proposal = {}
+
+        if resource and amount:
+            # Only build a real proposal when the resource is one the
+            # scenario actually knows about (when quantities are configured).
+            if not resource_quantities or resource in resource_quantities:
+                structured_proposal = {resource: int(amount)}
+
         proposal_parts = []
 
         if action:
@@ -286,13 +314,31 @@ class NegotiationOrchestrator:
             "Human participant requests a fair allocation."
         )
 
+        incoming_proposal_snapshot = dict(state.get("current_proposal", {}))
+
+        if normalized_action in ("OFFER", "COUNTER") and structured_proposal:
+            # Mirror what _step_async does for AI moves: this proposal
+            # becomes the thing every agent evaluates next round, and any
+            # previous unanimous acceptance of the old proposal no longer
+            # applies.
+            state["last_proposals"]["Human Participant"] = dict(structured_proposal)
+            state["current_proposal"] = dict(structured_proposal)
+            state["accepted_proposals"] = {}
+        elif normalized_action == "ACCEPT" and state.get("current_proposal"):
+            state["accepted_proposals"]["Human Participant"] = dict(
+                state["current_proposal"]
+            )
+
         state["history"].append(
             {
                 "agent": "Human Participant",
                 "message": final_message,
                 "reasoning": "Human participant proposal.",
                 "stance": "human",
-                "round": state["current_round"]
+                "round": state["current_round"],
+                "action": normalized_action,
+                "incoming_proposal": incoming_proposal_snapshot,
+                "parsed_proposal": structured_proposal,
             }
         )
 
@@ -300,7 +346,8 @@ class NegotiationOrchestrator:
             "success": True,
             "message": final_message,
             "round": state["current_round"],
-            "history": state["history"]
+            "history": state["history"],
+            "current_proposal": state.get("current_proposal", {}),
         }
 
     # =========================================================
@@ -888,6 +935,26 @@ class NegotiationOrchestrator:
 
             is_final_round = (state["current_round"] >= state["max_rounds"])
 
+            # -----------------------------------------------------
+            # GAP 2 FIX: actually call detect_deadlock(). It compares
+            # state["last_proposals"] (this round's proposals) against
+            # state["prev_proposals"] (snapshotted at the end of the
+            # previous round, below) to see if agents are stuck.
+            # -----------------------------------------------------
+
+            deadlock_detected = False
+
+            if not is_final_round:
+                try:
+                    deadlock_detected = detect_deadlock(
+                        state,
+                        state["max_rounds"]
+                    )
+                except Exception:
+                    deadlock_detected = False
+
+            state["deadlock_detected"] = deadlock_detected
+
             if is_final_round:
                 state["max_rounds_reached"] = True
                 state["negotiation_ended"] = True
@@ -896,9 +963,44 @@ class NegotiationOrchestrator:
                 state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
                 state["final_report"] = self._build_final_report(state)
                 print("[TERMINATION] reason=deadlock/max_rounds")
+
+            elif deadlock_detected:
+                if not state.get("resolution_attempted"):
+                    # First deadlock: attempt mediation
+                    state["resolution_attempted"] = True
+                    resolved = self._attempt_deadlock_resolution(
+                        state,
+                        agents
+                    )
+                    state["resolution_succeeded"] = resolved
+
+                    if resolved:
+                        state["current_round"] += 1
+                        state["status"] = "ongoing"
+                        print("[TERMINATION] reason=none, deadlock_resolution=succeeded")
+                    else:
+                        state["negotiation_ended"] = True
+                        state["consensus_reached"] = False
+                        state["status"] = "negotiation_breakdown"
+                        state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
+                        state["final_report"] = self._build_final_report(state)
+                        print("[TERMINATION] reason=deadlock_breakdown")
+                else:
+                    # Deadlock detected again AFTER mediation was already attempted -> Breakdown
+                    state["negotiation_ended"] = True
+                    state["consensus_reached"] = False
+                    state["status"] = "negotiation_breakdown"
+                    state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
+                    state["final_report"] = self._build_final_report(state)
+                    print("[TERMINATION] reason=deadlock_breakdown_post_mediation")
+
             else:
                 state["current_round"] += 1
                 state["status"] = "ongoing"
+
+            # Snapshot this round's proposals so next round's
+            # detect_deadlock() call has something to compare against.
+            state["prev_proposals"] = dict(state.get("last_proposals", {}))
 
         else:
 
@@ -926,6 +1028,96 @@ class NegotiationOrchestrator:
                 session_id
             )
         )
+
+    # =========================================================
+    # DEADLOCK RESOLUTION (GAP 3)
+    # =========================================================
+
+    def _attempt_deadlock_resolution(self, state, agents) -> bool:
+        """
+        Single automated mediation attempt for a genuine deadlock
+        (detected before max_rounds is hit). Builds a mediated
+        "midpoint" proposal from the agents' most recent individual
+        proposals, scaled to fit within available resource quantities.
+
+        Returns True if a valid mediated proposal could be produced
+        (resolution attempted -> negotiation continues), False if
+        there isn't enough data to mediate with (resolution failed ->
+        caller should treat this as a negotiation breakdown).
+        """
+
+        last_proposals = state.get("last_proposals", {})
+        resource_quantities = state.get("resource_quantities", {})
+
+        agent_names = [item.name for item in agents]
+        proposals = [
+            last_proposals[name]
+            for name in agent_names
+            if name in last_proposals and isinstance(last_proposals[name], dict)
+        ]
+
+        if len(proposals) < 2 or not resource_quantities:
+            # Not enough distinct positions on the table to mediate between.
+            return False
+
+        mediated_proposal = {}
+
+        for resource, available in resource_quantities.items():
+            values = [
+                proposal.get(resource, 0)
+                for proposal in proposals
+                if isinstance(proposal, dict)
+            ]
+
+            if not values:
+                continue
+
+            midpoint = sum(values) / len(values)
+            mediated_proposal[resource] = max(
+                0,
+                min(available, int(round(midpoint)))
+            )
+
+        if not mediated_proposal:
+            return False
+
+        total_requested = sum(mediated_proposal.values())
+        total_available = sum(resource_quantities.values())
+
+        if total_available and total_requested > total_available:
+            # Scale down proportionally so the mediated offer is a
+            # globally valid (zero-sum-respecting) allocation.
+            scale = total_available / total_requested
+            mediated_proposal = {
+                resource: max(0, int(round(quantity * scale)))
+                for resource, quantity in mediated_proposal.items()
+            }
+
+        state["current_proposal"] = dict(mediated_proposal)
+        # A freshly mediated proposal invalidates any prior acceptances.
+        state["accepted_proposals"] = {}
+
+        state["history"].append(
+            {
+                "agent": "Mediator",
+                "message": (
+                    "Deadlock detected. Proposing a mediated compromise: "
+                    + self._format_proposal(mediated_proposal)
+                    + "."
+                ),
+                "reasoning": (
+                    "Automated deadlock-resolution attempt: midpoint of the "
+                    "agents' most recent proposals, scaled to fit available "
+                    "resources."
+                ),
+                "stance": "mediator",
+                "round": state["current_round"],
+                "action": "MEDIATE",
+                "parsed_proposal": mediated_proposal,
+            }
+        )
+
+        return True
 
     # =========================================================
     # RESPONSE
@@ -1100,6 +1292,13 @@ class NegotiationOrchestrator:
                 "status",
                 "ongoing"
             ),
+
+            # GAP 4: expose deadlock/resolution info to the frontend
+            "deadlock_detected": state.get("deadlock_detected", False),
+
+            "resolution_attempted": state.get("resolution_attempted", False),
+
+            "resolution_succeeded": state.get("resolution_succeeded", False),
 
             "next_agent": next_agent,
 
