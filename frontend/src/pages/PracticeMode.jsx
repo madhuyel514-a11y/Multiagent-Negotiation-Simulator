@@ -56,15 +56,15 @@ function PracticeMode() {
   const initialMaxRounds =
     Number(initialConfig?.max_rounds) > 0
       ? Number(initialConfig.max_rounds)
-      : 5;
+      : 3;
 
   const initialResourceQuantities =
-    initialConfig?.resourceQuantities || {
-      Food: 500,
-      Medicine: 200,
-      'Rescue Boats': 25,
-      'Temporary Shelters': 150,
-      'Emergency Supplies': 300,
+    initialConfig?.resourceQuantities ||
+    initialConfig?.resource_quantities || {
+      'Rescue Teams': 40,
+      'Medical Aid': 300,
+      'Temporary Shelters': 200,
+      'Debris Clearance Equipment': 35,
     };
 
   // =======================================================
@@ -72,18 +72,22 @@ function PracticeMode() {
   // =======================================================
 
   const getResourceNames = (resources) => {
-    const names = Object.keys(resources || {});
+    if (
+      resources &&
+      typeof resources === 'object'
+    ) {
+      const names = Object.keys(resources);
 
-    if (names.length > 0) {
-      return names;
+      if (names.length > 0) {
+        return names;
+      }
     }
 
     return [
-      'Food',
-      'Medicine',
-      'Rescue Boats',
+      'Rescue Teams',
+      'Medical Aid',
       'Temporary Shelters',
-      'Emergency Supplies',
+      'Debris Clearance Equipment',
     ];
   };
 
@@ -109,7 +113,9 @@ function PracticeMode() {
   ] = useState(initialResourceQuantities);
 
   const [resource, setResource] =
-    useState(initialResources[0] || 'Food');
+    useState(
+      initialResources[0] || 'Rescue Teams'
+    );
 
   const [amount, setAmount] =
     useState('');
@@ -175,14 +181,14 @@ function PracticeMode() {
   }, [transcript, loading]);
 
   // =======================================================
-  // FORMAT ACTION
+  // NORMALIZE ACTION
   // =======================================================
 
   const normalizeAction = (
     value = 'PROPOSE'
   ) => {
     const upper =
-      String(value).toUpperCase();
+      String(value || '').toUpperCase();
 
     if (upper.includes('COUNTER')) {
       return 'COUNTER';
@@ -201,7 +207,7 @@ function PracticeMode() {
     }
 
     if (upper.includes('OFFER')) {
-      return 'PROPOSE';
+      return 'OFFER';
     }
 
     if (upper.includes('PROPOSE')) {
@@ -266,7 +272,10 @@ function PracticeMode() {
       };
     }
 
-    if (name === 'you') {
+    if (
+      name === 'you' ||
+      name.includes('human')
+    ) {
       return {
         header:
           'bg-gradient-to-r from-violet-700 to-purple-600',
@@ -288,19 +297,75 @@ function PracticeMode() {
   };
 
   // =======================================================
+  // EXTRACT AI RESPONSE
+  // =======================================================
+
+  const getAiResponse = (data) => {
+    if (!data) {
+      return {};
+    }
+
+    if (
+      data.ai_response &&
+      typeof data.ai_response === 'object'
+    ) {
+      return data.ai_response;
+    }
+
+    if (
+      data.response &&
+      typeof data.response === 'object'
+    ) {
+      return data.response;
+    }
+
+    return data;
+  };
+
+  // =======================================================
   // EXTRACT PROPOSAL
   // =======================================================
 
   const extractProposal = (data) => {
-    if (!data) return null;
+    if (!data) {
+      return null;
+    }
+
+    const aiResponse =
+      getAiResponse(data);
 
     return (
+      aiResponse?.current_proposal ||
       data?.current_proposal ||
+      aiResponse?.proposal ||
       data?.proposal ||
+      aiResponse?.full_allocation ||
       data?.full_allocation ||
-      data?.ai_response?.current_proposal ||
-      data?.ai_response?.proposal ||
-      data?.ai_response?.full_allocation ||
+      null
+    );
+  };
+
+  // =======================================================
+  // EXTRACT RESOURCES
+  // =======================================================
+
+  const extractResources = (data) => {
+    if (!data) {
+      return null;
+    }
+
+    const aiResponse =
+      getAiResponse(data);
+
+    return (
+      data?.resourceQuantities ||
+      data?.resource_quantities ||
+      data?.resources ||
+      data?.state?.resourceQuantities ||
+      data?.state?.resource_quantities ||
+      aiResponse?.resourceQuantities ||
+      aiResponse?.resource_quantities ||
+      aiResponse?.resources ||
       null
     );
   };
@@ -332,32 +397,119 @@ function PracticeMode() {
   };
 
   // =======================================================
+  // ADD AI RESPONSE TO TRANSCRIPT
+  // =======================================================
+
+  const addAiResponseToTranscript = (
+    data,
+    fallbackRound
+  ) => {
+    const aiResponse =
+      getAiResponse(data);
+
+    const aiMessage =
+      aiResponse?.message ||
+      aiResponse?.text ||
+      data?.message ||
+      'AI agent responded.';
+
+    const aiAgent =
+      aiResponse?.agent ||
+      aiResponse?.sender ||
+      data?.agent ||
+      data?.sender ||
+      'AI Agent';
+
+    const aiAction =
+      aiResponse?.action ||
+      data?.action ||
+      aiResponse?.llm_action ||
+      'PROPOSE';
+
+    const proposal =
+      extractProposal(data);
+
+    const responseRound =
+      Number(aiResponse?.round) ||
+      Number(data?.round) ||
+      fallbackRound ||
+      round;
+
+    addTranscriptItem({
+      sender: aiAgent,
+      actionType: aiAction,
+      text: aiMessage,
+      proposal,
+      roundNumber: responseRound,
+    });
+  };
+
+  // =======================================================
+  // UPDATE GEMINI METRICS
+  // =======================================================
+
+  const updateMetrics = (data) => {
+    const aiResponse =
+      getAiResponse(data);
+
+    const metrics =
+      aiResponse?.gemini_metrics ||
+      data?.gemini_metrics ||
+      {};
+
+    const requests =
+      metrics?.total_requests ??
+      metrics?.requests ??
+      null;
+
+    const input =
+      metrics?.total_input_tokens ??
+      metrics?.input_tokens ??
+      aiResponse?.input_tokens ??
+      data?.input_tokens ??
+      null;
+
+    const output =
+      metrics?.total_output_tokens ??
+      metrics?.output_tokens ??
+      aiResponse?.output_tokens ??
+      data?.output_tokens ??
+      null;
+
+    if (
+      requests !== null &&
+      Number(requests) >= 0
+    ) {
+      setApiRequests(Number(requests));
+    }
+
+    if (
+      input !== null &&
+      Number(input) >= 0
+    ) {
+      setInputTokens(Number(input));
+    }
+
+    if (
+      output !== null &&
+      Number(output) >= 0
+    ) {
+      setOutputTokens(Number(output));
+    }
+  };
+
+  // =======================================================
   // START SESSION
   // =======================================================
 
   const startSession = async () => {
-    if (!selectedScenario) {
-      setTranscript([
-        {
-          id: `config-error-${Date.now()}`,
-          sender: 'System',
-          action: 'SYSTEM',
-          text:
-            'No negotiation configuration found. Please configure the scenario first.',
-          proposal: null,
-          round: 1,
-        },
-      ]);
-
-      setStatus('Configuration missing');
-      setSessionStatus('Inactive');
-
-      return;
-    }
-
     try {
       setLoading(true);
-      setStatus('Starting negotiation...');
+
+      setStatus(
+        'Starting negotiation...'
+      );
+
       setSessionStatus('Active');
 
       const response = await fetch(
@@ -366,16 +518,23 @@ function PracticeMode() {
           method: 'POST',
 
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type':
+              'application/json',
           },
 
           body: JSON.stringify({
-            scenario: selectedScenario,
-            agents: agents,
+            scenario:
+              selectedScenario ||
+              {
+                title:
+                  'Flood Relief Resource Allocation',
+              },
+
+            agents,
+
             config: {
               max_rounds: maxRounds,
-              resourceQuantities:
-                resourceQuantities,
+              resourceQuantities,
             },
           }),
         }
@@ -407,8 +566,7 @@ function PracticeMode() {
       setSessionId(data.session_id);
 
       const backendRound =
-        Number(data?.round) ||
-        1;
+        Number(data?.round) || 1;
 
       setRound(backendRound);
 
@@ -419,16 +577,18 @@ function PracticeMode() {
         setCurrentProposal(proposal);
       }
 
-      if (data?.resourceQuantities) {
-        setResourceQuantities(
-          data.resourceQuantities
-        );
+      const resources =
+        extractResources(data);
+
+      if (
+        resources &&
+        typeof resources === 'object'
+      ) {
+        setResourceQuantities(resources);
       }
 
       setBackendConnected(true);
 
-      // IMPORTANT:
-      // Enable buttons after session starts
       setStatus('Your turn');
 
       setSessionStatus('Active');
@@ -526,7 +686,8 @@ function PracticeMode() {
           method: 'POST',
 
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type':
+              'application/json',
           },
 
           body: JSON.stringify({
@@ -554,19 +715,20 @@ function PracticeMode() {
           previous + latency
       );
 
-      setApiRequests(
-        (previous) =>
-          previous + 1
-      );
-
       const responseText =
         await response.text();
 
       if (!response.ok) {
         if (response.status === 404) {
           setSessionId(null);
-          setSessionStatus('Inactive');
-          setStatus('Session expired');
+
+          setSessionStatus(
+            'Inactive'
+          );
+
+          setStatus(
+            'Session expired'
+          );
         }
 
         throw new Error(
@@ -582,21 +744,24 @@ function PracticeMode() {
         data
       );
 
+      console.log(
+        'AI RESPONSE:',
+        getAiResponse(data)
+      );
+
       setBackendConnected(true);
 
       const aiResponse =
-        data?.ai_response ||
-        data?.response ||
-        data;
+        getAiResponse(data);
 
       // ===================================================
-      // ROUND HANDLING
+      // ROUND
       // ===================================================
 
       let backendRound =
         Number(
-          data?.round ??
-          aiResponse?.round
+          aiResponse?.round ??
+          data?.round
         );
 
       if (
@@ -606,16 +771,10 @@ function PracticeMode() {
         backendRound = round;
       }
 
-      if (
-        backendRound > maxRounds
-      ) {
-        backendRound = maxRounds;
-      }
-
       setRound(backendRound);
 
       // ===================================================
-      // PROPOSAL
+      // CURRENT PROPOSAL
       // ===================================================
 
       const proposal =
@@ -630,49 +789,25 @@ function PracticeMode() {
       // ===================================================
 
       const updatedResources =
-        data?.resourceQuantities ||
-        data?.resources ||
-        aiResponse?.resourceQuantities ||
-        aiResponse?.resources;
+        extractResources(data);
 
-      if (updatedResources) {
+      if (
+        updatedResources &&
+        typeof updatedResources === 'object'
+      ) {
         setResourceQuantities(
           updatedResources
         );
       }
 
       // ===================================================
-      // TOKENS
+      // METRICS
       // ===================================================
 
-      const newInputTokens =
-        data?.input_tokens ??
-        aiResponse?.input_tokens ??
-        0;
-
-      const newOutputTokens =
-        data?.output_tokens ??
-        aiResponse?.output_tokens ??
-        0;
-
-      if (Number(newInputTokens) > 0) {
-        setInputTokens(
-          (previous) =>
-            previous +
-            Number(newInputTokens)
-        );
-      }
-
-      if (Number(newOutputTokens) > 0) {
-        setOutputTokens(
-          (previous) =>
-            previous +
-            Number(newOutputTokens)
-        );
-      }
+      updateMetrics(data);
 
       // ===================================================
-      // AI RESPONSE MESSAGE
+      // DISPLAY AI RESPONSE
       // ===================================================
 
       const aiMessage =
@@ -681,26 +816,15 @@ function PracticeMode() {
         data?.message;
 
       if (aiMessage) {
-        addTranscriptItem({
-          sender:
-            aiResponse?.agent ||
-            aiResponse?.sender ||
-            data?.agent ||
-            data?.sender ||
-            'AI Agent',
-
-          actionType:
-            aiResponse?.action ||
-            data?.action ||
-            'PROPOSE',
-
-          text: aiMessage,
-
-          proposal,
-
-          roundNumber:
-            backendRound,
-        });
+        addAiResponseToTranscript(
+          data,
+          backendRound
+        );
+      } else {
+        console.warn(
+          'No AI message found in backend response:',
+          data
+        );
       }
 
       // ===================================================
@@ -708,16 +832,16 @@ function PracticeMode() {
       // ===================================================
 
       const consensusReached =
-        data?.consensus_reached === true ||
-        aiResponse?.consensus_reached === true;
+        aiResponse?.consensus_reached === true ||
+        data?.consensus_reached === true;
 
       const maxRoundsReached =
-        data?.max_rounds_reached === true ||
-        aiResponse?.max_rounds_reached === true;
+        aiResponse?.max_rounds_reached === true ||
+        data?.max_rounds_reached === true;
 
       const negotiationEnded =
-        data?.negotiation_ended === true ||
-        aiResponse?.negotiation_ended === true;
+        aiResponse?.negotiation_ended === true ||
+        data?.negotiation_ended === true;
 
       if (consensusReached) {
         setSessionStatus(
@@ -730,9 +854,7 @@ function PracticeMode() {
       } else if (
         maxRoundsReached
       ) {
-        setSessionStatus(
-          'Deadlock'
-        );
+        setSessionStatus('Deadlock');
 
         setStatus(
           'Negotiation ended'
@@ -747,19 +869,7 @@ function PracticeMode() {
         setStatus(
           'Negotiation complete'
         );
-      } else if (
-        backendRound >= maxRounds
-      ) {
-        setSessionStatus(
-          'Deadlock'
-        );
-
-        setStatus(
-          'Negotiation ended'
-        );
       } else {
-        // IMPORTANT:
-        // THIS ENABLES THE BUTTONS AGAIN
         setSessionStatus('Active');
 
         setStatus('Your turn');
@@ -779,11 +889,12 @@ function PracticeMode() {
 
       setBackendConnected(false);
 
-      // Allow user to try again
       if (sessionId) {
         setStatus('Your turn');
       } else {
-        setStatus('Connection error');
+        setStatus(
+          'Connection error'
+        );
       }
     } finally {
       setLoading(false);
@@ -898,9 +1009,7 @@ function PracticeMode() {
   // ENTER KEY
   // =======================================================
 
-  const handleKeyDown = (
-    event
-  ) => {
+  const handleKeyDown = (event) => {
     if (
       event.key === 'Enter' &&
       !event.shiftKey
@@ -979,12 +1088,19 @@ function PracticeMode() {
   const ProposalDisplay = ({
     proposal,
   }) => {
-    if (!proposal) {
+    if (
+      !proposal ||
+      typeof proposal !== 'object'
+    ) {
       return null;
     }
 
     const entries =
       Object.entries(proposal);
+
+    if (entries.length === 0) {
+      return null;
+    }
 
     const hasNestedObjects =
       entries.some(
@@ -1139,8 +1255,6 @@ function PracticeMode() {
   return (
     <div className="min-h-screen bg-slate-50">
 
-      {/* PAGE HEADER */}
-
       <div className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-[1500px] px-6 py-6 lg:px-8">
 
@@ -1198,8 +1312,6 @@ function PracticeMode() {
         </div>
       </div>
 
-      {/* SCENARIO */}
-
       <div className="mx-auto max-w-[1500px] px-6 pt-6 lg:px-8">
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -1249,11 +1361,7 @@ function PracticeMode() {
         </div>
       </div>
 
-      {/* MAIN DASHBOARD */}
-
       <div className="mx-auto grid max-w-[1500px] gap-6 px-6 py-6 xl:grid-cols-[minmax(0,1fr)_380px] lg:px-8">
-
-        {/* LEFT */}
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
@@ -1343,8 +1451,6 @@ function PracticeMode() {
               </div>
             </div>
           </div>
-
-          {/* INPUT */}
 
           <div className="border-t border-slate-200 bg-slate-50 p-6">
 
@@ -1539,8 +1645,6 @@ function PracticeMode() {
           </div>
 
         </section>
-
-        {/* RIGHT DASHBOARD */}
 
         <aside className="space-y-6">
 

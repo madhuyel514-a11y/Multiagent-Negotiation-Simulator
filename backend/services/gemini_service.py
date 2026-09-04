@@ -3,7 +3,7 @@ import json
 import re
 import itertools
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from google import genai
@@ -22,6 +22,8 @@ load_dotenv()
 
 _GEMINI_METRICS = {
     "total_requests": 0,
+    "successful_requests": 0,
+    "failed_requests": 0,
     "total_input_tokens": 0,
     "total_output_tokens": 0,
     "total_tokens": 0,
@@ -29,30 +31,97 @@ _GEMINI_METRICS = {
 }
 
 
+def reset_metrics():
+    global _GEMINI_METRICS
+
+    _GEMINI_METRICS = {
+        "total_requests": 0,
+        "successful_requests": 0,
+        "failed_requests": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_tokens": 0,
+        "total_latency": 0.0,
+    }
+
+
 def get_gemini_metrics():
     total_requests = _GEMINI_METRICS["total_requests"]
 
+    average_latency = (
+        _GEMINI_METRICS["total_latency"] / total_requests
+        if total_requests > 0
+        else 0.0
+    )
+
     return {
         "total_requests": total_requests,
+        "successful_requests": _GEMINI_METRICS["successful_requests"],
+        "failed_requests": _GEMINI_METRICS["failed_requests"],
         "total_input_tokens": _GEMINI_METRICS["total_input_tokens"],
         "total_output_tokens": _GEMINI_METRICS["total_output_tokens"],
         "total_tokens": _GEMINI_METRICS["total_tokens"],
-        "total_latency": _GEMINI_METRICS["total_latency"],
-        "average_latency": (
-            _GEMINI_METRICS["total_latency"] / total_requests
-            if total_requests
-            else 0.0
+        "total_latency": round(
+            _GEMINI_METRICS["total_latency"],
+            2,
+        ),
+        "average_latency": round(
+            average_latency,
+            2,
         ),
     }
 
 
+# This function is used by the backend/frontend
+def get_metrics() -> Dict[str, Any]:
+    total_requests = _GEMINI_METRICS["total_requests"]
+
+    average_latency = (
+        _GEMINI_METRICS["total_latency"] / total_requests
+        if total_requests > 0
+        else 0.0
+    )
+
+    return {
+        "api_requests": total_requests,
+
+        "successful_requests":
+            _GEMINI_METRICS["successful_requests"],
+
+        "failed_requests":
+            _GEMINI_METRICS["failed_requests"],
+
+        "input_tokens":
+            _GEMINI_METRICS["total_input_tokens"],
+
+        "output_tokens":
+            _GEMINI_METRICS["total_output_tokens"],
+
+        "total_tokens":
+            _GEMINI_METRICS["total_tokens"],
+
+        "average_latency":
+            round(average_latency, 2),
+
+        "total_latency":
+            round(_GEMINI_METRICS["total_latency"], 2),
+    }
+
+
 def _usage_metadata_values(usage_metadata):
+    """
+    Extract token usage safely from Gemini response metadata.
+    """
+
     if usage_metadata is None:
         return 0, 0, 0
 
     try:
+
         if hasattr(usage_metadata, "model_dump"):
-            metadata = usage_metadata.model_dump(exclude_none=True)
+            metadata = usage_metadata.model_dump(
+                exclude_none=True
+            )
 
         elif hasattr(usage_metadata, "to_dict"):
             metadata = usage_metadata.to_dict()
@@ -67,11 +136,13 @@ def _usage_metadata_values(usage_metadata):
                     "prompt_token_count",
                     0,
                 ),
+
                 "candidates_token_count": getattr(
                     usage_metadata,
                     "candidates_token_count",
                     0,
                 ),
+
                 "total_token_count": getattr(
                     usage_metadata,
                     "total_token_count",
@@ -110,7 +181,8 @@ def _usage_metadata_values(usage_metadata):
             int(total_tokens or 0),
         )
 
-    except Exception:
+    except Exception as exc:
+        print(f"[GEMINI METRICS ERROR] {exc}")
         return 0, 0, 0
 
 
@@ -126,16 +198,19 @@ def _record_successful_gemini_metrics(
     )
 
     _GEMINI_METRICS["total_requests"] += 1
+    _GEMINI_METRICS["successful_requests"] += 1
+
     _GEMINI_METRICS["total_input_tokens"] += input_tokens
     _GEMINI_METRICS["total_output_tokens"] += output_tokens
     _GEMINI_METRICS["total_tokens"] += total_tokens
+
     _GEMINI_METRICS["total_latency"] += latency_seconds
 
     total_requests = _GEMINI_METRICS["total_requests"]
 
     average_latency = (
         _GEMINI_METRICS["total_latency"] / total_requests
-        if total_requests
+        if total_requests > 0
         else 0.0
     )
 
@@ -153,9 +228,17 @@ def _record_successful_gemini_metrics(
     print(
         f"[GEMINI METRICS SUMMARY] "
         f"requests={total_requests} "
+        f"input_tokens={_GEMINI_METRICS['total_input_tokens']} "
+        f"output_tokens={_GEMINI_METRICS['total_output_tokens']} "
         f"total_tokens={_GEMINI_METRICS['total_tokens']} "
         f"average_latency={average_latency:.2f}s"
     )
+
+
+def _record_failed_gemini_request(latency_seconds):
+    _GEMINI_METRICS["total_requests"] += 1
+    _GEMINI_METRICS["failed_requests"] += 1
+    _GEMINI_METRICS["total_latency"] += latency_seconds
 
 
 # =========================================================
@@ -195,9 +278,13 @@ def _configured_keys() -> List[str]:
     keys = []
 
     for key in configured:
+
         cleaned = key.strip().strip("\"'")
 
-        if cleaned and cleaned.lower() not in placeholders:
+        if (
+            cleaned
+            and cleaned.lower() not in placeholders
+        ):
             keys.append(cleaned)
 
     return keys
@@ -210,20 +297,30 @@ def _configured_keys() -> List[str]:
 _clients = []
 
 for key in _configured_keys():
+
     try:
+
         client = genai.Client(api_key=key)
+
         _clients.append(client)
 
-        print("[GEMINI] Client configured successfully")
+        print(
+            "[GEMINI] Client configured successfully"
+        )
 
     except Exception as exc:
+
         print(
             "[GEMINI] Client initialization failed: "
             f"{type(exc).__name__}: {exc}"
         )
 
 
-_client_cycle = itertools.cycle(_clients) if _clients else None
+_client_cycle = (
+    itertools.cycle(_clients)
+    if _clients
+    else None
+)
 
 
 def get_client():
@@ -236,7 +333,7 @@ def get_client():
 
 
 def _rotated_clients(selected_client):
-    """Try the selected client first, then rotate through others."""
+    """Try selected client first, then other clients."""
 
     if not selected_client or not _clients:
         return []
@@ -244,119 +341,19 @@ def _rotated_clients(selected_client):
     selected_index = 0
 
     for index, client in enumerate(_clients):
+
         if client is selected_client:
+
             selected_index = index
             break
 
     return [
         _clients[
-            (selected_index + offset) % len(_clients)
+            (selected_index + offset)
+            % len(_clients)
         ]
         for offset in range(len(_clients))
     ]
-
-
-# =========================================================
-# LLM METRICS
-# =========================================================
-
-_llm_metrics = {
-    "api_requests": 0,
-    "input_tokens": 0,
-    "output_tokens": 0,
-    "total_tokens": 0,
-    "total_latency": 0.0,
-    "successful_requests": 0,
-    "failed_requests": 0,
-}
-
-
-def reset_metrics():
-    global _llm_metrics
-
-    _llm_metrics = {
-        "api_requests": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "total_latency": 0.0,
-        "successful_requests": 0,
-        "failed_requests": 0,
-    }
-
-
-def _extract_usage_metadata(response) -> Dict[str, int]:
-    usage = getattr(response, "usage_metadata", None)
-
-    input_tokens, output_tokens, total_tokens = (
-        _usage_metadata_values(usage)
-    )
-
-    return {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-    }
-
-
-def _record_metrics(
-    response=None,
-    latency=0.0,
-    success=True,
-):
-    _llm_metrics["api_requests"] += 1
-    _llm_metrics["total_latency"] += float(latency)
-
-    if success:
-        _llm_metrics["successful_requests"] += 1
-    else:
-        _llm_metrics["failed_requests"] += 1
-
-    if response is not None:
-        usage = _extract_usage_metadata(response)
-
-        _llm_metrics["input_tokens"] += (
-            usage["input_tokens"]
-        )
-
-        _llm_metrics["output_tokens"] += (
-            usage["output_tokens"]
-        )
-
-        _llm_metrics["total_tokens"] += (
-            usage["total_tokens"]
-        )
-
-
-def get_metrics() -> Dict[str, Any]:
-    requests = _llm_metrics["api_requests"]
-
-    average_latency = (
-        _llm_metrics["total_latency"] / requests
-        if requests > 0
-        else 0.0
-    )
-
-    return {
-        "api_requests": _llm_metrics["api_requests"],
-        "successful_requests": (
-            _llm_metrics["successful_requests"]
-        ),
-        "failed_requests": (
-            _llm_metrics["failed_requests"]
-        ),
-        "input_tokens": _llm_metrics["input_tokens"],
-        "output_tokens": _llm_metrics["output_tokens"],
-        "total_tokens": _llm_metrics["total_tokens"],
-        "average_latency": round(
-            average_latency,
-            2,
-        ),
-        "total_latency": round(
-            _llm_metrics["total_latency"],
-            2,
-        ),
-    }
 
 
 # =========================================================
@@ -364,7 +361,11 @@ def get_metrics() -> Dict[str, Any]:
 # =========================================================
 
 def _failure_category(error):
+
     text = str(error).upper()
+
+    if "503" in text or "UNAVAILABLE" in text:
+        return "503 UNAVAILABLE"
 
     if "429" in text or "RESOURCE_EXHAUSTED" in text:
         return "429 RESOURCE_EXHAUSTED"
@@ -386,6 +387,7 @@ def _failure_category(error):
 # =========================================================
 
 def _normalize_agent_name(name):
+
     if not name:
         return "unknown"
 
@@ -404,6 +406,7 @@ def _normalize_agent_name(name):
 
 
 def _display_agent_name(agent):
+
     mapping = {
         "government": "Government Agent",
         "ngo": "NGO Agent",
@@ -421,12 +424,14 @@ def _display_agent_name(agent):
 # =========================================================
 
 def _extract_json(text):
+
     if not text:
         return None
 
     text = str(text).strip()
 
     # Remove markdown code fences
+
     text = re.sub(
         r"^```json\s*",
         "",
@@ -449,6 +454,7 @@ def _extract_json(text):
     text = text.strip()
 
     # Direct JSON
+
     try:
         return json.loads(text)
 
@@ -456,6 +462,7 @@ def _extract_json(text):
         pass
 
     # Find JSON object inside response
+
     match = re.search(
         r"\{.*\}",
         text,
@@ -463,6 +470,7 @@ def _extract_json(text):
     )
 
     if match:
+
         try:
             return json.loads(match.group(0))
 
@@ -477,13 +485,6 @@ def _extract_json(text):
 # =========================================================
 
 def _parse_allocations(message, agent_names):
-    """
-    Parse allocations like:
-
-    Government Agent Allocation:
-    Food: 100 units
-    Medicine: 50 units
-    """
 
     if not message:
         return {}
@@ -500,6 +501,7 @@ def _parse_allocations(message, agent_names):
     lines = str(message).splitlines()
 
     for raw_line in lines:
+
         line = raw_line.strip()
 
         if not line:
@@ -512,11 +514,15 @@ def _parse_allocations(message, agent_names):
         )
 
         if heading_match:
+
             raw_name = heading_match.group(1)
 
-            normalized = _normalize_agent_name(raw_name)
+            normalized = _normalize_agent_name(
+                raw_name
+            )
 
             if normalized in normalized_agents:
+
                 current_agent = normalized
 
                 allocations.setdefault(
@@ -533,6 +539,7 @@ def _parse_allocations(message, agent_names):
         )
 
         if resource_match and current_agent:
+
             resource = (
                 resource_match.group(1)
                 .strip()
@@ -559,6 +566,7 @@ def _validate_allocations(
     resource_quantities,
     agent_names,
 ):
+
     if not allocations:
         return False, "No allocations found"
 
@@ -569,36 +577,47 @@ def _validate_allocations(
 
     actual_agents = set(allocations.keys())
 
-    missing_agents = expected_agents - actual_agents
+    missing_agents = (
+        expected_agents - actual_agents
+    )
 
     if missing_agents:
+
         return (
             False,
             f"Missing agent allocations: "
             f"{sorted(missing_agents)}",
         )
 
-    for resource, available in resource_quantities.items():
+    for resource, available in (
+        resource_quantities.items()
+    ):
+
         resource_key = str(resource).lower()
 
         total = 0
 
         for agent in expected_agents:
+
             agent_allocation = allocations.get(
                 agent,
                 {},
             )
 
             if resource_key not in agent_allocation:
+
                 return (
                     False,
                     f"Missing {resource_key} "
                     f"allocation for {agent}",
                 )
 
-            quantity = agent_allocation[resource_key]
+            quantity = agent_allocation[
+                resource_key
+            ]
 
             if quantity < 0:
+
                 return (
                     False,
                     f"Negative quantity for "
@@ -608,6 +627,7 @@ def _validate_allocations(
             total += quantity
 
         if total != int(available):
+
             return (
                 False,
                 f"{resource_key} total is {total}, "
@@ -627,6 +647,7 @@ def _create_dynamic_allocation(
     current_agent,
     current_round,
 ):
+
     normalized_agents = [
         _normalize_agent_name(name)
         for name in agent_names
@@ -648,7 +669,6 @@ def _create_dynamic_allocation(
         [0.34, 0.33, 0.33],
     )
 
-    # Rotate priorities across rounds
     rotation = (
         (current_round - 1)
         % len(weights)
@@ -659,7 +679,10 @@ def _create_dynamic_allocation(
         + weights[:rotation]
     )
 
-    for resource, available in resource_quantities.items():
+    for resource, available in (
+        resource_quantities.items()
+    ):
+
         available = int(available)
 
         values = [
@@ -670,11 +693,15 @@ def _create_dynamic_allocation(
         remainder = available - sum(values)
 
         for i in range(remainder):
-            values[i % len(values)] += 1
+
+            values[
+                i % len(values)
+            ] += 1
 
         for index, agent in enumerate(
             normalized_agents
         ):
+
             allocations[agent][
                 str(resource).lower()
             ] = values[index]
@@ -690,11 +717,15 @@ def _format_allocation_message(
     allocations,
     action="COUNTER",
 ):
+
     if action == "OFFER":
+
         intro = (
             "I propose the following allocation:"
         )
+
     else:
+
         intro = (
             "I propose the following revised allocation:"
         )
@@ -710,40 +741,50 @@ def _format_allocation_message(
         "district",
     ]
 
-    # Include known agents first
     processed = set()
 
     for agent in agent_order:
+
         if agent not in allocations:
             continue
 
         processed.add(agent)
 
         parts.append(
-            f"{_display_agent_name(agent)} Allocation:"
+            f"{_display_agent_name(agent)} "
+            f"Allocation:"
         )
 
         for resource, quantity in (
             allocations[agent].items()
         ):
+
             parts.append(
-                f"{resource.title()}: {quantity} units"
+                f"{resource.title()}: "
+                f"{quantity} units"
             )
 
         parts.append("")
 
-    # Include any additional agents
-    for agent, resources in allocations.items():
+    for agent, resources in (
+        allocations.items()
+    ):
+
         if agent in processed:
             continue
 
         parts.append(
-            f"{_display_agent_name(agent)} Allocation:"
+            f"{_display_agent_name(agent)} "
+            f"Allocation:"
         )
 
-        for resource, quantity in resources.items():
+        for resource, quantity in (
+            resources.items()
+        ):
+
             parts.append(
-                f"{resource.title()}: {quantity} units"
+                f"{resource.title()}: "
+                f"{quantity} units"
             )
 
         parts.append("")
@@ -763,6 +804,7 @@ def _generic_fallback_response(
     current_agent="government",
     current_round=1,
 ):
+
     print(f"[FALLBACK] Reason: {reason}")
 
     allocations = _create_dynamic_allocation(
@@ -787,8 +829,8 @@ def _generic_fallback_response(
         "action": action,
         "message": message,
         "reasoning": (
-            f"A valid fallback allocation was generated "
-            f"for round {current_round}."
+            f"A valid fallback allocation was "
+            f"generated for round {current_round}."
         ),
         "stance": "strategic",
     }
@@ -799,16 +841,27 @@ def _generic_fallback_response(
 # =========================================================
 
 async def ask_model(
+
     prompt,
+
     agent_name=None,
+
     total_budget=None,
+
     last_proposals=None,
+
     current_round=1,
+
     resource_quantities=None,
+
     current_proposal=None,
+
     agent_names=None,
+
     max_rounds=5,
+
     scenario=None,
+
     stubborn_until=None,
 ):
 
@@ -821,15 +874,21 @@ async def ask_model(
     # =====================================================
 
     if resource_quantities:
+
         cleaned_resources = {}
 
-        for key, value in resource_quantities.items():
+        for key, value in (
+            resource_quantities.items()
+        ):
+
             try:
+
                 cleaned_resources[
                     str(key).lower()
                 ] = int(value)
 
             except (TypeError, ValueError):
+
                 cleaned_resources[
                     str(key).lower()
                 ] = 0
@@ -837,6 +896,7 @@ async def ask_model(
         resource_quantities = cleaned_resources
 
     else:
+
         resource_quantities = {
             "food": 500,
             "medicine": 200,
@@ -854,6 +914,7 @@ async def ask_model(
     # =====================================================
 
     if not agent_names:
+
         agent_names = [
             "Government Agent",
             "NGO Agent",
@@ -863,6 +924,7 @@ async def ask_model(
     current_proposal = current_proposal or {}
 
     if total_budget is None:
+
         total_budget = sum(
             resource_quantities.values()
         )
@@ -871,20 +933,30 @@ async def ask_model(
     # PREVIOUS PROPOSALS
     # =====================================================
 
-    other_proposals_text = "No previous proposals."
+    other_proposals_text = (
+        "No previous proposals."
+    )
 
     if last_proposals:
+
         proposal_lines = []
 
-        for name, proposal in last_proposals.items():
-            normalized = _normalize_agent_name(name)
+        for name, proposal in (
+            last_proposals.items()
+        ):
+
+            normalized = _normalize_agent_name(
+                name
+            )
 
             if normalized != current_agent:
+
                 proposal_lines.append(
                     f"{name}: {proposal}"
                 )
 
         if proposal_lines:
+
             other_proposals_text = "\n".join(
                 proposal_lines
             )
@@ -896,17 +968,20 @@ async def ask_model(
     recipients = []
 
     if scenario and isinstance(scenario, dict):
+
         recipients = scenario.get(
             "recipients",
             [],
         ) or []
 
     if recipients:
+
         recipients_text_lines = [
             "AFFECTED AREAS / RECIPIENTS:"
         ]
 
         for recipient in recipients:
+
             name = recipient.get(
                 "name",
                 "Unknown Area",
@@ -945,8 +1020,10 @@ async def ask_model(
         )
 
     else:
+
         recipients_text = (
-            "No specific affected areas were provided."
+            "No specific affected areas "
+            "were provided."
         )
 
     # =====================================================
@@ -954,11 +1031,16 @@ async def ask_model(
     # =====================================================
 
     allocation_format = "\n\n".join(
+
         f"{name} Allocation:\n"
+
         + "\n".join(
+
             f"{resource.title()}: NUMBER units"
+
             for resource in allowed_resources
         )
+
         for name in agent_names
     )
 
@@ -967,29 +1049,42 @@ async def ask_model(
     # =====================================================
 
     stubborn_target = (
+
         stubborn_until
+
         if stubborn_until is not None
+
         else max(1, max_rounds // 2)
     )
 
     stubbornness_instruction = f"""
+
 NEGOTIATION BEHAVIOR:
 
 We are currently in Round {current_round}
+
 out of {max_rounds}.
 
 Before Round {stubborn_target + 1}:
+
 - Be firm and protective of your priorities.
+
 - Do not accept proposals too easily.
+
 - Push for better terms.
 
 During later rounds:
+
 - Consider reasonable concessions.
+
 - Work toward consensus.
 
 In the final rounds:
+
 - Avoid unnecessary deadlock.
+
 - Accept a genuinely reasonable proposal when appropriate.
+
 """
 
     # =====================================================
@@ -997,10 +1092,17 @@ In the final rounds:
     # =====================================================
 
     print("\n========================================")
+
     print("[NEGOTIATION]")
+
     print(f"Agent: {current_agent}")
+
     print(f"Round: {current_round}")
-    print(f"Resources: {resource_quantities}")
+
+    print(
+        f"Resources: {resource_quantities}"
+    )
+
     print("========================================\n")
 
     # =====================================================
@@ -1008,16 +1110,20 @@ In the final rounds:
     # =====================================================
 
     instruction = f"""
+
 You are {_display_agent_name(current_agent)}
+
 participating in a MULTI-AGENT DISASTER RELIEF
 RESOURCE NEGOTIATION.
 
 You must behave like a realistic human decision-maker.
 
 CURRENT ROUND:
+
 {current_round} of {max_rounds}
 
 YOUR ROLE:
+
 {_display_agent_name(current_agent)}
 
 AVAILABLE RESOURCES:
@@ -1043,17 +1149,20 @@ PREVIOUS NEGOTIATION PROPOSALS:
 ROLE PRIORITIES:
 
 Government:
+
 Prioritizes life-saving operations,
 national coordination, and operational control.
 
 NGO:
+
 Prioritizes vulnerable populations,
 humanitarian fairness, and urgent relief.
 
 District Administration:
+
 Prioritizes local communities,
-district-level risk reduction, and
-immediate operational needs.
+district-level risk reduction,
+and immediate operational needs.
 
 {stubbornness_instruction}
 
@@ -1066,9 +1175,13 @@ Speak naturally and professionally.
 Do not sound robotic.
 
 You may:
+
 - OFFER
+
 - COUNTER
+
 - REJECT
+
 - ACCEPT
 
 IMPORTANT RULES:
@@ -1110,6 +1223,7 @@ Required JSON format:
     "reasoning": "Brief explanation of the decision",
     "stance": "firm|moderate|conceding|strategic|accept"
 }}
+
 """
 
     # =====================================================
@@ -1123,6 +1237,7 @@ Required JSON format:
     )
 
     if not clients:
+
         return _generic_fallback_response(
             resource_quantities=resource_quantities,
             agent_names=agent_names,
@@ -1137,8 +1252,8 @@ Required JSON format:
     # =====================================================
 
     models = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
     ]
 
     last_failure = (
@@ -1153,12 +1268,15 @@ Required JSON format:
         clients,
         start=1,
     ):
+
         for model_name in models:
 
             response = None
+
             start_time = time.perf_counter()
 
             try:
+
                 print(
                     f"[GEMINI] Trying client "
                     f"{client_index}, "
@@ -1177,39 +1295,45 @@ Required JSON format:
                     - start_time
                 )
 
-                _record_metrics(
-                    response=response,
-                    latency=latency_seconds,
-                    success=True,
-                )
-
                 response_text = (
                     getattr(response, "text", "")
                     or ""
                 ).strip()
 
                 if not response_text:
+
                     last_failure = (
                         "Empty Gemini response"
                     )
+
+                    _record_failed_gemini_request(
+                        latency_seconds
+                    )
+
                     continue
 
                 print(
                     "[GEMINI RESPONSE RECEIVED]"
                 )
 
-                # =============================================
+                # =========================================
                 # EXTRACT JSON
-                # =============================================
+                # =========================================
 
                 result = _extract_json(
                     response_text
                 )
 
                 if not result:
+
                     last_failure = (
                         "Gemini returned invalid JSON"
                     )
+
+                    _record_failed_gemini_request(
+                        latency_seconds
+                    )
+
                     continue
 
                 action = str(
@@ -1248,14 +1372,20 @@ Required JSON format:
                 }
 
                 if action not in valid_actions:
+
                     last_failure = (
                         f"Invalid action: {action}"
                     )
+
+                    _record_failed_gemini_request(
+                        latency_seconds
+                    )
+
                     continue
 
-                # =============================================
+                # =========================================
                 # ACCEPT
-                # =============================================
+                # =========================================
 
                 if action == "ACCEPT":
 
@@ -1266,8 +1396,10 @@ Required JSON format:
                     )
 
                     _record_successful_gemini_metrics(
-                        agent_name=agent_name
-                        or current_agent,
+                        agent_name=(
+                            agent_name
+                            or current_agent
+                        ),
                         current_round=current_round,
                         model_name=model_name,
                         latency_seconds=latency_seconds,
@@ -1276,17 +1408,20 @@ Required JSON format:
 
                     return {
                         "action": "ACCEPT",
+
                         "message": (
                             message
                             or "I accept the current proposal."
                         ),
+
                         "reasoning": reasoning,
+
                         "stance": "accept",
                     }
 
-                # =============================================
+                # =========================================
                 # REJECT
-                # =============================================
+                # =========================================
 
                 if action == "REJECT":
 
@@ -1297,8 +1432,10 @@ Required JSON format:
                     )
 
                     _record_successful_gemini_metrics(
-                        agent_name=agent_name
-                        or current_agent,
+                        agent_name=(
+                            agent_name
+                            or current_agent
+                        ),
                         current_round=current_round,
                         model_name=model_name,
                         latency_seconds=latency_seconds,
@@ -1307,17 +1444,20 @@ Required JSON format:
 
                     return {
                         "action": "REJECT",
+
                         "message": (
                             message
                             or "I reject the current proposal."
                         ),
+
                         "reasoning": reasoning,
+
                         "stance": stance,
                     }
 
-                # =============================================
+                # =========================================
                 # OFFER / COUNTER
-                # =============================================
+                # =========================================
 
                 if action in {
                     "OFFER",
@@ -1350,8 +1490,10 @@ Required JSON format:
                         )
 
                         _record_successful_gemini_metrics(
-                            agent_name=agent_name
-                            or current_agent,
+                            agent_name=(
+                                agent_name
+                                or current_agent
+                            ),
                             current_round=current_round,
                             model_name=model_name,
                             latency_seconds=latency_seconds,
@@ -1372,6 +1514,10 @@ Required JSON format:
                         f"{reason}"
                     )
 
+                    _record_failed_gemini_request(
+                        latency_seconds
+                    )
+
             except Exception as exc:
 
                 latency_seconds = (
@@ -1379,10 +1525,8 @@ Required JSON format:
                     - start_time
                 )
 
-                _record_metrics(
-                    response=None,
-                    latency=latency_seconds,
-                    success=False,
+                _record_failed_gemini_request(
+                    latency_seconds
                 )
 
                 last_failure = (
