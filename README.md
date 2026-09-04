@@ -1,115 +1,549 @@
-# Disaster Relief Resource Negotiation System - Evaluation Module
+# Disaster Relief Resource Negotiation System
 
-This branch (`evaluation-module`) focuses on the **Evaluation Engine** and **Gemini API Integration** for the negotiation simulation. It extends the base project by introducing LLM-powered evaluation of negotiation rounds, consensus detection, and AI-driven agent reasoning.
+A web-based **Multi-Agent Disaster Relief Negotiation Simulator** that models how different disaster-response stakeholders negotiate and allocate limited emergency resources during disasters.
 
----
-
-## ✨ Changes in this Branch
-
-This branch introduces the following key components:
-
-- **Evaluation Engine** (`backend/services/evaluation_engine.py`): Analyzes negotiation transcripts to detect consensus, evaluate proposals, and calculate scores.
-- **Gemini Service Integration** (`backend/services/gemini_service.py`): Connects to the Google Gemini API to power agent reasoning, evaluation, and dynamic responses.
-- **Negotiation Orchestrator Updates** (`backend/services/negotiation_orchestrator.py`): Manages the flow of negotiations, passing data between the frontend, the agents, and the evaluation engine.
-- **Agent Prompts & Logic**: Updates to `district_agent.py`, `government_agent.py`, `ngo_agent.py`, and `prompt_builder.py` to support LLM context and dynamic prompt generation.
-- **Frontend Arena Updates** (`frontend/src/pages/NegotiationArena.jsx`): UI enhancements to display evaluation results and real-time AI reasoning.
+The system allows users to select a disaster scenario, configure AI agents and their personalities, and participate in a multi-round negotiation process. The project integrates a **React frontend**, **FastAPI backend**, **AI-powered agents**, a **Negotiation Orchestrator**, and **Gemini AI** for intelligent negotiation and evaluation.
 
 ---
 
-## 🧠 Core Models
+# Project Overview
 
-### Evaluation Model
-The **Evaluation Model** monitors the ongoing negotiation to determine its health and progress. It uses the Gemini LLM to analyze the context of the entire conversation. Its primary responsibilities include:
-- **Consensus Detection:** Identifying when all agents have reached a mutual agreement on resource distribution.
-- **Deadlock Detection:** Recognizing when agents are stuck in a loop or refusing to budge on their positions.
-- **Scoring (0-100 Scale):** Assigning a quantitative score to the negotiation based on factors like speed to resolution, fairness, and adherence to constraints.
-  - **> 85:** Strong Consensus (Highly collaborative and efficient agreement).
-  - **50 - 85:** Partial Agreement (Deal reached, but with significant friction or unbalanced compromises).
-  - **< 50:** Deadlock / Failure (Agents failed to reach an agreement within the maximum rounds or walked away).
+During disasters, multiple stakeholders must coordinate and negotiate the allocation of limited emergency resources.
 
-### Concession Model
-The **Concession Model** tracks the behavioral dynamics of the agents during the negotiation. It monitors:
-- **Position Shifts:** How much an agent's resource demands change from their initial stance compared to their final agreed position.
-  - **High Concession (> 50% shift):** The agent significantly lowered their demands to reach a deal.
-  - **Moderate Concession (20% - 50% shift):** The agent compromised reasonably to find middle ground.
-  - **Low/No Concession (< 20% shift):** The agent remained firm on their initial demands (often seen in 'Aggressive' or 'Firm' personas).
-- **Willingness to Compromise:** Identifying which agents are making compromises to reach a deal versus those who are remaining stubborn.
-- **Analysis and Reporting:** Providing a breakdown of concession patterns after the negotiation concludes to evaluate the effectiveness of different agent personas.
+This system simulates negotiations between different disaster-response stakeholders, including:
+
+* Government
+* NGO
+* District Administration
+* Human Participant
+
+The system supports disaster scenarios, configurable AI agent personalities, resource allocation, negotiation proposals, counter-offers, agreement detection, and deadlock detection.
+
+The objective is to simulate a realistic multi-agent negotiation environment for disaster relief resource allocation.
 
 ---
 
-## 🔐 Environment Variables (.env)
+# Features
 
-To run the evaluation module, you must provide a valid Google Gemini API key. The backend relies on this key to evaluate negotiations and generate agent responses.
+## Scenario Selection
 
-1. Navigate to the `backend/` directory.
-2. Create a file named `.env` (it is already ignored by Git).
-3. Add your Gemini API key to the file in the following format:
+Users can select different disaster scenarios, including:
 
-```env
-GEMINI_API_KEY=your_actual_api_key_here
+* Flood Relief Resource Allocation
+* Earthquake Emergency Response
+* Cyclone Relief Coordination
+
+Each scenario contains information about:
+
+* Disaster context
+* Available resources
+* Participating stakeholders
+* Negotiation objectives
+
+---
+
+# Agent Configuration
+
+The system supports configurable AI agents.
+
+The primary AI agents are:
+
+* Government Agent
+* NGO Agent
+* District Administration Agent
+
+Each agent can have:
+
+* A specific role
+* Primary goals
+* Operational constraints
+* Personality configuration
+
+Supported personality styles include:
+
+* Aggressive
+* Collaborative
+* Risk-Averse
+
+The selected configuration is stored and passed to the negotiation system.
+
+---
+
+# Practice Mode
+
+Practice Mode allows a human participant to actively participate in the negotiation.
+
+The human participant can:
+
+* Make resource offers
+* Request resources
+* Accept proposals
+* Reject proposals
+* Make counter-offers
+* Send negotiation messages
+* View AI responses
+* Track negotiation rounds
+
+The Practice Mode communicates with the FastAPI backend to process negotiation turns.
+
+---
+
+# Multi-Agent Negotiation
+
+The system supports negotiation between multiple stakeholders.
+
+The negotiation process includes:
+
+1. Starting a negotiation session
+2. Loading the selected scenario
+3. Loading configured AI agents
+4. Initializing available resources
+5. Allowing the human participant to make a proposal
+6. Processing the proposal through the backend
+7. Generating AI agent responses
+8. Updating the current proposal
+9. Evaluating the negotiation state
+10. Detecting agreement or deadlock
+
+The Negotiation Orchestrator manages the overall negotiation flow.
+
+---
+
+# Negotiation Actions
+
+The system supports the following negotiation actions:
+
+* PROPOSE
+* OFFER
+* REQUEST
+* ACCEPT
+* REJECT
+* COUNTER
+
+Each negotiation turn is recorded in the negotiation transcript.
+
+---
+
+# Negotiation Orchestrator
+
+The Negotiation Orchestrator is responsible for managing the negotiation process.
+
+Its responsibilities include:
+
+* Creating negotiation sessions
+* Managing negotiation rounds
+* Tracking the current proposal
+* Processing human participant messages
+* Coordinating AI agent responses
+* Managing resource allocation
+* Detecting negotiation completion
+* Detecting deadlocks
+* Preventing invalid negotiation states
+
+The orchestrator acts as the central controller between the frontend, AI agents, and evaluation system.
+
+---
+
+# AI Agents
+
+## Government Agent
+
+The Government Agent focuses on:
+
+* Public safety
+* Policy decisions
+* Large-scale resource allocation
+* Emergency response priorities
+
+---
+
+## NGO Agent
+
+The NGO Agent focuses on:
+
+* Humanitarian assistance
+* Relief distribution
+* Medical support
+* Vulnerable populations
+
+---
+
+## District Administration Agent
+
+The District Administration Agent focuses on:
+
+* Local coordination
+* Ground-level implementation
+* Shelter management
+* Emergency operations
+
+---
+
+# Evaluation Engine
+
+The Evaluation Engine analyzes the progress of the negotiation.
+
+Its responsibilities include:
+
+* Consensus detection
+* Deadlock detection
+* Proposal evaluation
+* Negotiation progress analysis
+* Resource allocation analysis
+* Negotiation scoring
+
+The evaluation system helps determine whether the participants are successfully moving toward an agreement.
+
+---
+
+# Consensus Detection
+
+The system detects when participants reach an agreement on the proposed resource allocation.
+
+When consensus is reached:
+
+* The negotiation is marked as complete
+* The session status is updated
+* The final proposal can be displayed
+* Further negotiation actions can be stopped
+
+---
+
+# Deadlock Detection
+
+The system detects negotiation deadlocks.
+
+A deadlock may occur when:
+
+* Participants repeatedly reject proposals
+* Negotiation does not progress
+* Agents remain stuck in conflicting positions
+* The maximum number of rounds is reached without agreement
+
+When a deadlock occurs, the negotiation session is ended.
+
+---
+
+# Resource Management
+
+The system manages disaster-relief resources such as:
+
+* Food
+* Medicine
+* Rescue Boats
+* Temporary Shelters
+* Emergency Supplies
+
+The available resources are tracked throughout the negotiation process.
+
+---
+
+# Current Proposal
+
+The system maintains the current negotiation proposal.
+
+A proposal can contain resource allocations for one or more participants.
+
+The frontend displays:
+
+* Current proposal
+* Proposed resource allocation
+* AI responses
+* Negotiation transcript
+* Negotiation round
+* Session status
+
+---
+
+# LLM Integration
+
+The project integrates Google Gemini AI to support intelligent negotiation behavior.
+
+Gemini AI can be used for:
+
+* AI agent reasoning
+* Dynamic negotiation responses
+* Proposal evaluation
+* Negotiation analysis
+* Consensus detection
+
+---
+
+# LLM Metrics
+
+The Practice Mode dashboard tracks basic LLM and API metrics, including:
+
+* API Requests
+* Input Tokens
+* Output Tokens
+* Total Tokens
+* Average Latency
+* Total API Latency
+
+These metrics help monitor AI and backend interaction during negotiations.
+
+---
+
+# Technology Stack
+
+## Frontend
+
+* React.js
+* Vite
+* Tailwind CSS
+* React Router
+* Lucide React
+
+## Backend
+
+* Python
+* FastAPI
+* Uvicorn
+
+## AI
+
+* Google Gemini API
+
+## Version Control
+
+* Git
+* GitHub
+
+---
+
+# Project Structure
+
+```text
+Multiagent-Negotiation-Simulator/
+│
+├── backend/
+│   ├── agents/
+│   │   ├── base_agent.py
+│   │   ├── government_agent.py
+│   │   ├── ngo_agent.py
+│   │   └── district_agent.py
+│   │
+│   ├── prompts/
+│   │   └── prompt_builder.py
+│   │
+│   ├── services/
+│   │   ├── evaluation_engine.py
+│   │   ├── gemini_service.py
+│   │   └── negotiation_orchestrator.py
+│   │
+│   ├── main.py
+│   └── requirements.txt
+│
+├── frontend/
+│   └── src/
+│       ├── data/
+│       │   └── scenarios.js
+│       │
+│       ├── pages/
+│       │   ├── Home.jsx
+│       │   ├── ScenarioSelection.jsx
+│       │   ├── AgentConfiguration.jsx
+│       │   ├── NegotiationArena.jsx
+│       │   └── PracticeMode.jsx
+│       │
+│       ├── App.jsx
+│       └── main.jsx
+│
+├── README.md
+└── .gitignore
 ```
 
-*Note: Never commit your `.env` file to version control.*
+---
+
+# Installation
+
+## Clone the Repository
+
+```bash
+git clone https://github.com/madhuyel514-a11y/Multiagent-Negotiation-Simulator.git
+```
+
+Move into the project directory:
+
+```bash
+cd Multiagent-Negotiation-Simulator
+```
 
 ---
 
-## 🚀 Running the Project
+# Backend Setup
 
-You need to run both the backend (FastAPI) and frontend (React/Vite) servers simultaneously.
-
-### 1. Start the Backend
-
-Open a terminal and navigate to the backend directory:
+Navigate to the backend directory:
 
 ```bash
 cd backend
 ```
 
-Create and activate a virtual environment (recommended):
+Create a virtual environment:
+
 ```bash
 python -m venv .venv
-# On Windows:
+```
+
+Activate the virtual environment.
+
+### Windows
+
+```bash
 .venv\Scripts\activate
-# On Mac/Linux:
+```
+
+### Mac/Linux
+
+```bash
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install the required dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-Start the FastAPI server:
+---
+
+# Environment Variables
+
+Create a `.env` file inside the `backend` directory.
+
+Add your Gemini API key:
+
+```env
+GEMINI_API_KEY=your_actual_api_key_here
+```
+
+> Never commit your `.env` file or API keys to GitHub.
+
+---
+
+# Start the Backend
+
+From the backend directory, run:
+
 ```bash
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
-*The backend will be running at `http://127.0.0.1:8000`*
 
-### 2. Start the Frontend
+The backend will run at:
 
-Open a **new** terminal (keep the backend running) and navigate to the frontend directory:
+```text
+http://127.0.0.1:8000
+```
+
+---
+
+# Frontend Setup
+
+Open a new terminal and navigate to the frontend directory:
 
 ```bash
 cd frontend
 ```
 
-Install the required Node packages:
+Install the required packages:
+
 ```bash
 npm install
 ```
 
-Start the Vite development server:
+Start the development server:
+
 ```bash
 npm run dev
 ```
-*The frontend will be running at `http://localhost:5173`*
+
+The frontend will normally run at:
+
+```text
+http://localhost:5173
+```
 
 ---
 
-## 🧪 Testing the Evaluation Module
+# Application Workflow
 
-1. Open `http://localhost:5173` in your browser.
-2. Select a scenario and configure your agents.
-3. Start the negotiation in the **Negotiation Arena**.
-4. As agents take turns, the **Evaluation Engine** (powered by Gemini) will analyze the discussion in the background, evaluate the proposals, and determine if consensus has been reached.
+```text
+Home
+  ↓
+Scenario Selection
+  ↓
+Agent Configuration
+  ↓
+Negotiation Arena
+  ↓
+Practice Mode
+  ↓
+Human Proposal / Response
+  ↓
+FastAPI Backend
+  ↓
+Negotiation Orchestrator
+  ↓
+AI Agent Response
+  ↓
+Evaluation Engine
+  ↓
+Agreement or Deadlock
+```
+
+---
+
+# Current System Status
+
+## Implemented
+
+* React frontend
+* Scenario Selection
+* Agent Configuration
+* Personality Selection
+* Negotiation Arena
+* Practice Mode
+* FastAPI backend integration
+* Negotiation Orchestrator
+* Government Agent
+* NGO Agent
+* District Administration Agent
+* Resource negotiation
+* Multi-round negotiation
+* Proposal handling
+* Accept and Reject actions
+* Counter-offer support
+* Evaluation Engine
+* Deadlock detection
+* Gemini AI integration
+* Negotiation transcript
+* API and latency metrics
+
+---
+
+# Future Improvements
+
+Possible future improvements include:
+
+* Persistent database storage
+* MongoDB integration
+* Negotiation history
+* Advanced analytics dashboard
+* Improved negotiation scoring
+* Detailed agent performance analysis
+* Visualization of negotiation outcomes
+* User authentication
+* Exportable negotiation reports
+* Advanced deadlock resolution strategies
+
+---
+
+# Contributors
+
+This project is being developed collaboratively as a Multi-Agent AI Negotiation System project.
+
+---
+
+# License
+
+This project is developed for educational and academic purposes.
