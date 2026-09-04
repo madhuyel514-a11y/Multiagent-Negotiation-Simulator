@@ -26,35 +26,34 @@ def _format_resources(resources):
 def _format_history(history):
     """
     Format negotiation history for the prompt.
-    Shows numerical proposals clearly so agents can reference specific numbers.
+    Shows what each agent said and proposed so agents can respond realistically.
     """
     if not history:
-        return "No previous messages in this negotiation — this is Round 1."
+        return "No previous messages in this negotiation — this is Round 1. Make the opening offer."
 
     lines = []
     for entry in history:
         agent = entry.get("agent", "Unknown Agent")
         message = entry.get("message", "")
         round_num = entry.get("round", "?")
-        stance = entry.get("stance", "")
-        stance_tag = f" [{stance.upper()}]" if stance and stance != "human" else ""
         action = entry.get("action", "")
-        reasoning = entry.get("reasoning", "")
+        speech = entry.get("speech", "")
         proposal = entry.get("parsed_proposal", {})
-        lines.append(
-            f"Round {round_num} - {agent}{stance_tag} ({action}): {message}"
-        )
-        if reasoning:
-            lines.append(f"  Reasoning: {reasoning}")
-        if proposal:
-            lines.append(f"  Proposal: {proposal}")
+
+        # Prefer the rich speech text if available
+        display_text = speech if speech else message
+
+        lines.append(f"Round {round_num} - {agent} [{action}]: {display_text}")
+        if proposal and isinstance(proposal, dict) and not any(isinstance(v, dict) for v in proposal.values()):
+            prop_str = "; ".join(f"{r}: {q} units" for r, q in proposal.items())
+            lines.append(f"  └─ {agent}'s proposal for themselves: {prop_str}")
 
     return "\n".join(lines)
 
 
 def _format_other_proposals(last_proposals, current_agent_name):
     """
-    Format what other agents have most recently proposed,
+    Format what other agents have most recently proposed for THEMSELVES,
     so the current agent can reference specific numbers and disagree.
     """
     if not last_proposals:
@@ -68,11 +67,11 @@ def _format_other_proposals(last_proposals, current_agent_name):
     if not others:
         return ""
 
-    lines = ["OTHER AGENTS' CURRENT PROPOSALS (reference these specifically when you agree or disagree):"]
+    lines = ["OTHER AGENTS' CURRENT RESOURCE REQUESTS (reference these specifically when you agree or disagree):"]
     for agent_name, props in others.items():
         if isinstance(props, dict):
             prop_str = "; ".join(f"{r}: {q} units" for r, q in props.items())
-            lines.append(f"  {agent_name}: {prop_str}")
+            lines.append(f"  {agent_name} is requesting: {prop_str}")
         else:
             lines.append(f"  {agent_name}: {props}")
 
@@ -91,17 +90,12 @@ def build_prompt(
     current_round=1,
 ):
     """
-    Builds the LLM prompt using:
-    - Agent persona with conflict-oriented position
-    - Selected personality
-    - Scenario
-    - Available resources (with quantities)
-    - Full negotiation history
-    - Total budget constraint
-    - Other agents' last proposals (for cross-referencing)
+    Builds the LLM prompt for a single agent to speak naturally in its own voice.
 
-    CRITICAL: This prompt ENFORCES resource constraints AND conflict
-    to make negotiations feel like real goal-driven negotiations.
+    CRITICAL: Each agent proposes only THEIR OWN resource allocation — what THEY
+    need for their own operations. They do NOT speak for or allocate resources to
+    other agents. Real negotiation happens through each agent defending their own
+    position, referencing what others have asked for, and making trade-offs.
     """
 
     resources_formatted, allowed_resources = _format_resources(resources)
@@ -113,10 +107,10 @@ def build_prompt(
     # Total budget constraint
     if total_budget:
         budget_section = f"""
-TOTAL RESOURCE POOL: {total_budget} units combined.
-This is a ZERO-SUM negotiation — you CANNOT propose maximum amounts for all resources.
-Every unit you gain in one resource means less for another.
-Your proposal MUST reflect genuine trade-offs based on your priorities.
+TOTAL RESOURCE POOL: {total_budget} units combined across ALL agents.
+This is a ZERO-SUM negotiation — the more you request, the less the other agents get.
+Every unit you gain means less for others, so justify why YOU need that quantity.
+Make real trade-offs: concede lower-priority resources to secure your top priorities.
 """
     else:
         budget_section = ""
@@ -132,6 +126,7 @@ Your proposal MUST reflect genuine trade-offs based on your priorities.
 
 {formatted}
 
+React to these proposals in your speech — agree, disagree, or propose a compromise.
 --------------------------------------------------
 """
 
@@ -142,7 +137,7 @@ Your proposal MUST reflect genuine trade-offs based on your priorities.
             for resource, quantity in current_proposal.items()
         )
         if current_proposal
-        else "No incoming proposal yet; make the opening offer."
+        else "No incoming proposal yet — make your opening offer."
     )
 
     prompt = f"""
@@ -165,9 +160,10 @@ Selected Personality:
 
 Negotiation Style:
 {persona['negotiation_style']}
+
 CURRENT ROUND: {current_round}
 
-LATEST INCOMING PROPOSAL BEING EVALUATED:
+LATEST INCOMING PROPOSAL ON THE TABLE:
 {incoming_proposal}
 
 PERSONALITY BEHAVIOUR RULES:
@@ -211,9 +207,10 @@ CRITICAL RESOURCE CONSTRAINTS:
 - You MUST ONLY use these resources: {resource_list}
 - You MUST NEVER mention any other resources
 - Each proposed quantity MUST NOT EXCEED the available amount
-- Every resource name in your proposal MUST exactly match a name from the allowed list above
+- You are proposing YOUR OWN share — what YOUR operations need
 - Your proposal must show REAL TRADE-OFFS — you cannot have maximum of everything
-- STRIVE FOR A FAIR NEGOTIATION: Do NOT demand more than 45% of ANY single resource. Start close to an even 33% split for all resources, only leaning slightly higher (up to 45%) for your top priorities.
+- Do NOT demand more than 45% of ANY single resource
+- Start close to a fair 33% split, leaning higher (up to 45%) only for your top priorities
 
 --------------------------------------------------
 
@@ -225,25 +222,38 @@ Conversation History:
 {other_proposals_section}
 INSTRUCTIONS FOR YOUR NEXT DECISION:
 
-Evaluate the latest incoming proposal against your own objectives and make it
-feel like a REAL negotiation:
+You are speaking as {persona['name']} in this negotiation. You speak ONLY for yourself.
+
+FUNDAMENTAL RULE: You ONLY propose what YOUR operations need. You do NOT dictate what
+other agents should receive. The other agents speak for themselves.
 
 You MUST:
-1. Decide whether to ACCEPT, COUNTER, or REJECT the incoming proposal.
-2. If countering, provide a concrete counterproposal and explain why it better serves your objectives.
-3. Make concessions on lower-priority resources when appropriate while protecting high-priority resources.
-4. Consider the full history above; do not respond in isolation.
-5. Do not decide simply because of the round number or automatically accept in a final round.
-6. Use ONLY resource names from the allowed list: {resource_list}
-7. Include concrete numerical quantities and never exceed available amounts.
-8. Use assertive language and reference specific incoming numbers when disagreeing.
+1. Decide whether to ACCEPT, COUNTER, or REJECT the current proposal on the table.
+2. Speak in first person — use "I", "we", "our operations need", "our team requires".
+3. Reference specific numbers from other agents' proposals when agreeing or disagreeing.
+4. If countering: state what YOU are requesting for yourself and WHY your operations require it.
+5. Make real trade-offs: explicitly say what you are giving up in exchange for something you need.
+6. Consider the full conversation history; do not respond in isolation.
+7. Use ONLY resource names from the allowed list: {resource_list}
+8. Include concrete numerical quantities and never exceed available amounts.
 
 You MUST NOT:
-1. Simply "appreciate" every proposal without disagreement
-2. Propose identical or very similar numbers to the previous round without justification
-3. Invent or mention resources not in the allowed list
-4. Propose quantities exceeding available amounts
-5. Be vague — always use specific numbers
+1. Propose allocations for OTHER agents — they speak for themselves
+2. Say "I propose Government gets X, NGO gets Y, District gets Z" — this is WRONG
+3. Simply "appreciate" every proposal without disagreement
+4. Propose identical numbers to the previous round without justification
+5. Invent or mention resources not in the allowed list
+6. Propose quantities exceeding available amounts
+7. Be vague — always use specific numbers
+
+GOOD EXAMPLE of what your speech should look like:
+"We agree that rescue operations are urgent, but 200 medicine units are insufficient for
+the number of injured people. We propose increasing our medicine allocation to 300 units
+and request at least 250 food units for our shelters. We can reduce our rescue team
+request from 8 to 6 to accommodate the government's operational needs."
+
+BAD EXAMPLE (DO NOT DO THIS):
+"Government Agent: Rescue Teams: 20 units. NGO Agent: Medical Aid: 150 units. District: ..."
 
 Return ONLY valid JSON.
 
@@ -251,10 +261,11 @@ Format:
 
 {{
     "agent": "{persona['name']}",
+    "speech": "Your natural-language dialogue paragraph — what you actually SAY in the negotiation. Must be conversational, first-person, reference other agents by name, make real arguments, state trade-offs explicitly.",
     "offer": {{
-        "proposal": "Your specific proposal with ONLY allowed resource names and concrete quantities"
+        "proposal": "Your specific resource request for YOUR OWN operations only — concrete quantities for each resource you need"
     }},
-    "reason": "Your reasoning — what you disagree with, what you are conceding, and why",
+    "reason": "Your internal reasoning — what you disagree with, what you are conceding, and why",
     "accept": false
 }}
 """

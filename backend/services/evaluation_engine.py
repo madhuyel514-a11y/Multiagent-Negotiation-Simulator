@@ -81,14 +81,6 @@ def calculate_consensus(state: Dict[str, Any]) -> float:
     if state.get("consensus_reached"):
         return 1.0
 
-    # Base consensus progression by round
-    round_progress = {
-        1: 0.30,
-        2: 0.55,
-        3: 0.72,
-        4: 0.88,
-    }.get(current_round, 0.75)
-
     # Check resource constraint fit
     all_resources = set(resource_quantities.keys())
     if all_resources:
@@ -119,11 +111,9 @@ def calculate_consensus(state: Dict[str, Any]) -> float:
                     resource_agreements.append(max(0.0, available / total_requested))
             
             fit_score = sum(resource_agreements) / len(resource_agreements) if resource_agreements else 0.5
-            # Blend round progression with fit score
-            blended = (round_progress * 0.7) + (fit_score * 0.3)
-            return round(min(max(blended, 0.2), 0.95), 2)
+            return round(min(max(fit_score, 0.0), 0.99), 2)
 
-    return round(min(round_progress, 0.94), 2)
+    return 0.5
 
 
 def detect_deadlock(
@@ -149,6 +139,43 @@ def detect_deadlock(
 
     if len(set(recent)) == 1 and recent[0]:
         return True
+
+    # Explicit check: the last full round of agents all COUNTERed again
+    # with the exact same allocation they proposed the round before
+    # (not just similar wording — an unchanged parsed_proposal).
+    round_start_index = len(history) - agent_count
+    recent_round = history[round_start_index:]
+
+    if len(recent_round) == agent_count and all(
+        entry.get("action") == "COUNTER" for entry in recent_round
+    ):
+        all_unchanged = True
+
+        for offset, entry in enumerate(recent_round):
+            entry_index = round_start_index + offset
+            agent_name = entry.get("agent")
+            current_proposal = entry.get("parsed_proposal") or {}
+
+            prior_entry = next(
+                (
+                    item for item in reversed(history[:entry_index])
+                    if item.get("agent") == agent_name
+                ),
+                None,
+            )
+
+            if prior_entry is None:
+                all_unchanged = False
+                break
+
+            prior_proposal = prior_entry.get("parsed_proposal") or {}
+
+            if current_proposal != prior_proposal:
+                all_unchanged = False
+                break
+
+        if all_unchanged:
+            return True
 
     last_proposals = state.get("last_proposals", {})
     if len(last_proposals) < 2:
@@ -214,29 +241,13 @@ def _resource_priority(resource: str, agent: Dict[str, Any], scenario: Any) -> f
     preference_tokens = _text_tokens(preference_text)
     scenario_tokens = _text_tokens(scenario)
 
-    # Role-specific priorities are a fallback for the built-in agents. Explicit
-    # goals and priorities still win because their matching weight is higher.
-    role = str(agent.get("role", "")).lower()
-    role_priorities = {
-        "government": ("rescue", "safety", "infrastructure", "debris"),
-        "ngo": ("medical", "shelter", "food", "water", "vulnerable"),
-        "district": ("debris", "clearance", "rescue", "infrastructure", "access"),
-    }
-    role_terms = next(
-        (terms for name, terms in role_priorities.items() if name in role),
-        (),
-    )
-
     explicit_match = bool(resource_tokens & preference_tokens)
-    role_match = any(term in resource.lower() for term in role_terms)
     scenario_match = bool(resource_tokens & scenario_tokens)
 
     if explicit_match:
         return 1.0
-    if role_match:
-        return 0.85
     if scenario_match:
-        return 0.65
+        return 0.75
     return 0.4
 
 
@@ -284,12 +295,20 @@ def generate_turn_evaluation(
     if not isinstance(agent_allocation, dict):
         agent_allocation = {}
 
+    recipient_allocations = (
+        list(proposal.values())
+        if isinstance(proposal, dict)
+        and proposal
+        and all(isinstance(allocation, dict) for allocation in proposal.values())
+        else [agent_allocation]
+    )
     invalid = any(
         resource not in known_resources
         or not isinstance(quantity, (int, float))
         or quantity < 0
         or quantity > resource_quantities.get(resource, 0)
-        for resource, quantity in agent_allocation.items()
+        for allocation in recipient_allocations
+        for resource, quantity in allocation.items()
     )
 
     if not proposal:
@@ -326,64 +345,78 @@ def generate_turn_evaluation(
         elif received > desired_quantity and priority < 0.85:
             reduction = int(round(received - desired_quantity))
             adjustments[resource] = f"-{reduction}"
-            trades.append(f"concede {resource} by {reduction} units")
+        if gap and priority > 0.6:
+            adj = min(gap, max(0, available - int(received)))
+            if adj > 0:
+                adjustments[resource] = f"+{adj}"
 
     satisfaction = (weighted_score / total_weight * 100) if total_weight else 0.0
-    personality = str(agent.get("personality", "")).lower()
-    threshold = 68.0
-    if "aggressive" in personality:
-        threshold += 8.0
-    elif "risk" in personality:
-        threshold -= 3.0
 
-    objective_action = "REJECT"
-    if not invalid and satisfaction >= threshold:
-        objective_action = "ACCEPT"
-    elif not invalid and satisfaction >= 35.0:
+    # Determine global state validity
+    is_valid_global_state = True
+    proposal_to_validate = new_proposal if new_proposal else proposal
+    if isinstance(proposal_to_validate, dict):
+        for res, available in resource_quantities.items():
+            total_req = sum(
+                alloc.get(res, 0)
+                for name, alloc in proposal_to_validate.items()
+                if isinstance(alloc, dict)
+            )
+            if total_req > available:
+                is_valid_global_state = False
+                break
+    else:
+        is_valid_global_state = False
+
+    agent_last_proposal = state.get("last_proposals", {}).get(agent_name, {})
+
+    # 4. Determine Objective Action
+    if invalid:
+        objective_action = "REJECT"
+    elif is_valid_global_state:
+        # Everyone fits! 
+        # If the agent changed its proposal to make it fit, it must COUNTER so the new proposal gets saved.
+        # If it didn't change its proposal, it can safely ACCEPT the global consensus.
+        if agent_allocation != agent_last_proposal or not agent_last_proposal:
+            objective_action = "COUNTER"
+        else:
+            objective_action = "ACCEPT"
+    else:
+        # Proposals don't fit yet, or someone hasn't spoken. Must keep negotiating.
         objective_action = "COUNTER"
 
+    # 5. Reconcile with LLM's requested action
     requested_action = str(raw_action or "").strip().upper()
+    
     if requested_action == "ACCEPT":
-        # Gemini may request acceptance, but only the objective evaluator can
-        # approve it. A failed acceptance remains a counter or rejection.
-        action = objective_action if objective_action != "ACCEPT" else "ACCEPT"
+        if is_valid_global_state:
+            action = "ACCEPT"
+        else:
+            action = "COUNTER"  # Can't accept an invalid state
     elif requested_action in ("COUNTER", "REJECT", "OFFER"):
-        # A model's explicit negotiation position must not be upgraded merely
-        # because the numeric satisfaction score is high.
-        action = "REJECT" if invalid else requested_action
+        action = requested_action
     else:
-        action = objective_action
+        action = "COUNTER"
 
-    if requested_action == "COUNTER" and satisfaction >= threshold:
-        decision_explanation = (
-            "The proposal meets the satisfaction threshold, but the agent chose "
-            "to continue negotiating based on its objectives/personality."
-        )
-    elif action == "ACCEPT":
-        decision_explanation = "The proposal satisfies the agent's acceptance criteria."
-    elif action == "REJECT":
-        decision_explanation = "The proposal violates constraints or falls below the agent's minimum acceptable position."
+    # 6. Explanations
+    if action == "ACCEPT":
+        decision_explanation = "The global resource allocations are valid and the agent accepts the consensus."
+    elif action == "REJECT" and invalid:
+        decision_explanation = "The proposed allocation requests non-existent resources or exceeds total availability."
+    elif requested_action == "ACCEPT" and action == "COUNTER":
+        decision_explanation = "The agent attempted to accept, but consensus is impossible because total requests exceed available resources."
     else:
-        decision_explanation = "The proposal is negotiable but does not fully satisfy the agent's objectives."
+        decision_explanation = "The agent is negotiating to secure its operational priorities."
 
-    trades = []
-    if action in ("COUNTER", "REJECT"):
-        for resource, adjustment in list(adjustments.items()):
-            if adjustment.startswith("+") and int(adjustment[1:]) <= 0:
-                del adjustments[resource]
-        trades = [
-            f"adjust {resource} by {value} units"
-            for resource, value in adjustments.items()
-        ]
-
-    trade_str = "; ".join(trades) if trades else "Protect high-priority resources and maintain the offered allocation"
+    trades = [f"adjust {res} by {val}" for res, val in adjustments.items()]
+    trade_str = "; ".join(trades) if trades else "Maintain the offered allocation"
 
     return {
         "action": action,
         "satisfaction": round(max(0.0, min(satisfaction, 100.0)), 1),
-        "threshold": round(threshold, 1),
+        "threshold": 100.0 if not is_valid_global_state else 0.0,
         "is_accepted": action == "ACCEPT",
         "explanation": decision_explanation,
         "trade_str": trade_str,
-        "adjustments": adjustments
+        "adjustments": adjustments,
     }

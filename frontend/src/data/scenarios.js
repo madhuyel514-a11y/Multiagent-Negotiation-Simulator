@@ -15,6 +15,11 @@ export const scenarios = [
       'Temporary Shelters': 150,
       'Emergency Supplies': 300
     },
+    recipients: [
+      { name: 'Riverbend District', population: 15000, severity: 'High', needs: ['Food', 'Rescue Boats', 'Temporary Shelters'] },
+      { name: 'Lakeside District', population: 8000, severity: 'Medium', needs: ['Medicine', 'Emergency Supplies'] },
+      { name: 'Hillside District', population: 5000, severity: 'Low', needs: ['Food', 'Emergency Supplies'] }
+    ],
     challenges: [
       'Limited resources',
       'Damaged transportation routes',
@@ -75,6 +80,11 @@ export const scenarios = [
       'Temporary Shelters': 200,
       'Debris Clearance Equipment': 35
     },
+    recipients: [
+      { name: 'North Sector', population: 22000, severity: 'Critical', needs: ['Rescue Teams', 'Medical Aid'] },
+      { name: 'Central Sector', population: 18000, severity: 'High', needs: ['Debris Clearance Equipment', 'Temporary Shelters'] },
+      { name: 'South Sector', population: 12000, severity: 'Medium', needs: ['Medical Aid', 'Temporary Shelters'] }
+    ],
     challenges: [
       'Restricted access to damaged zones',
       'Overwhelmed medical facilities',
@@ -135,6 +145,11 @@ export const scenarios = [
       'Shelter Materials': 180,
       'Communication Equipment': 45
     },
+    recipients: [
+      { name: 'Coastal Region', population: 30000, severity: 'High', needs: ['Evacuation Transport', 'Shelter Materials'] },
+      { name: 'Inland Valley', population: 15000, severity: 'Medium', needs: ['Food', 'Communication Equipment'] },
+      { name: 'Port Authority Zone', population: 5000, severity: 'Low', needs: ['Food', 'Shelter Materials'] }
+    ],
     challenges: [
       'Severe weather disruption',
       'Widespread infrastructure damage',

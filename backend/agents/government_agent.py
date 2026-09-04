@@ -79,4 +79,7 @@ class GovernmentAgent(BaseAgent):
                 item.get("name")
                 for item in context.get("agents", [])
             ],
+            max_rounds=context.get("max_rounds", 5),
+            scenario=context.get("scenario", {}),
+            stubborn_until=context.get("stubborn_until"),
         )

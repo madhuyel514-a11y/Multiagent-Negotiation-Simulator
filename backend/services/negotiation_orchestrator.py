@@ -7,11 +7,17 @@ from agents.government_agent import GovernmentAgent
 from agents.ngo_agent import NGOAgent
 from agents.district_agent import DistrictAdministrationAgent
 
-from services.gemini_service import ask_model
+from services.gemini_service import ask_model, get_gemini_metrics
+
 from services.evaluation_engine import (
     calculate_consensus,
     generate_turn_evaluation,
 )
+
+try:
+    from services.evaluation_engine import detect_deadlock
+except ImportError:
+    detect_deadlock = None
 
 
 class NegotiationOrchestrator:
@@ -39,7 +45,7 @@ class NegotiationOrchestrator:
         agents = []
 
         # =====================================================
-        # CREATE AGENTS
+        # CREATE CONFIGURED AGENTS
         # =====================================================
 
         for index, cfg in enumerate(agents_config):
@@ -93,6 +99,8 @@ class NegotiationOrchestrator:
                     personality,
                 )
 
+            # Optional configuration
+
             if cfg.get("goal"):
 
                 agent.primary_goal = str(
@@ -104,8 +112,11 @@ class NegotiationOrchestrator:
                 constraints = cfg.get("constraints")
 
                 if isinstance(constraints, list):
+
                     agent.constraints = constraints
+
                 else:
+
                     agent.constraints = [
                         str(constraints)
                     ]
@@ -157,7 +168,10 @@ class NegotiationOrchestrator:
         try:
 
             max_rounds = int(
-                config.get("max_rounds", 5)
+                config.get(
+                    "max_rounds",
+                    5,
+                )
             )
 
         except (TypeError, ValueError):
@@ -231,13 +245,11 @@ class NegotiationOrchestrator:
 
             "last_proposals": {},
 
-            # Current proposal completely replaces
-            # the previous proposal.
+            # Current proposal replaces old proposal
             "current_proposal": {},
 
             "accepted_proposals": {},
 
-            # Human interaction preferences
             "human_preferences": {},
 
             "human_accepted": False,
@@ -280,6 +292,15 @@ class NegotiationOrchestrator:
             "max_rounds_reached": False,
 
             "status": "ongoing",
+
+            # Deadlock tracking
+            "prev_proposals": {},
+
+            "deadlock_detected": False,
+
+            "resolution_attempted": False,
+
+            "resolution_succeeded": False,
 
             "max_rounds": max_rounds,
         }
@@ -345,10 +366,6 @@ class NegotiationOrchestrator:
             session_id
         ]["state"]
 
-        # =====================================================
-        # NEGOTIATION ENDED
-        # =====================================================
-
         if state.get("negotiation_ended"):
 
             return {
@@ -366,7 +383,7 @@ class NegotiationOrchestrator:
             }
 
         # =====================================================
-        # GET MESSAGE
+        # NORMALIZE INPUT
         # =====================================================
 
         if not human_message:
@@ -379,6 +396,16 @@ class NegotiationOrchestrator:
         action = str(
             action or "Offer"
         ).strip().upper()
+
+        if action not in (
+            "OFFER",
+            "REQUEST",
+            "COUNTER",
+            "ACCEPT",
+            "REJECT",
+        ):
+
+            action = "OFFER"
 
         resource = str(
             resource or ""
@@ -415,6 +442,10 @@ class NegotiationOrchestrator:
 
             state["human_accepted"] = True
 
+            state["accepted_proposals"][
+                "Human Participant"
+            ] = dict(current_proposal)
+
             final_message = (
                 "Human Participant ACCEPTED "
                 "the current proposal."
@@ -428,13 +459,18 @@ class NegotiationOrchestrator:
 
             state["human_accepted"] = False
 
+            state["accepted_proposals"].pop(
+                "Human Participant",
+                None,
+            )
+
             final_message = (
                 "Human Participant REJECTED "
                 "the current proposal."
             )
 
         # =====================================================
-        # HUMAN OFFER / REQUEST / COUNTER
+        # OFFER / REQUEST / COUNTER
         # =====================================================
 
         else:
@@ -448,7 +484,8 @@ class NegotiationOrchestrator:
                     {},
                 ).get(resource)
 
-                # Try case-insensitive resource matching
+                # Case-insensitive matching
+
                 if available is None:
 
                     for existing_resource in (
@@ -464,11 +501,13 @@ class NegotiationOrchestrator:
                         ):
 
                             resource = existing_resource
+
                             available = (
                                 state[
                                     "resource_quantities"
                                 ][existing_resource]
                             )
+
                             break
 
                 if available is not None:
@@ -523,7 +562,7 @@ class NegotiationOrchestrator:
             final_message = " | ".join(parts)
 
         # =====================================================
-        # SAVE HUMAN HISTORY
+        # SAVE HISTORY
         # =====================================================
 
         state["history"].append({
@@ -788,6 +827,9 @@ class NegotiationOrchestrator:
 
                 result[agent_name] = allocation
 
+        # A valid complete allocation needs at least
+        # two participating agent allocations.
+
         if len(result) >= 2:
 
             return self._validate_allocation(
@@ -802,8 +844,7 @@ class NegotiationOrchestrator:
         return {}
 
     # =========================================================
-    # GENERATE NEGOTIATED ALLOCATION
-    # IMPORTANT: NOT ALWAYS EQUAL DISTRIBUTION
+    # GENERATE COMPLETE ALLOCATION
     # =========================================================
 
     def _generate_complete_allocation(
@@ -837,10 +878,6 @@ class NegotiationOrchestrator:
             for agent_name in agent_names
         }
 
-        # =====================================================
-        # GET PERSONALITIES
-        # =====================================================
-
         personalities = {
 
             agent["name"]: str(
@@ -853,27 +890,10 @@ class NegotiationOrchestrator:
             for agent in agents
         }
 
-        # =====================================================
-        # GET HUMAN PREFERENCES
-        # =====================================================
-
         human_preferences = state.get(
             "human_preferences",
             {},
         )
-
-        # =====================================================
-        # CURRENT PROPOSAL
-        # =====================================================
-
-        previous_proposal = state.get(
-            "current_proposal",
-            {},
-        )
-
-        # =====================================================
-        # DISTRIBUTE EACH RESOURCE
-        # =====================================================
 
         for resource, total in resources.items():
 
@@ -888,12 +908,7 @@ class NegotiationOrchestrator:
                     "collaborative",
                 )
 
-                # Base weight
                 weight = 1.0
-
-                # ---------------------------------------------
-                # PERSONALITY EFFECT
-                # ---------------------------------------------
 
                 if "aggressive" in personality:
 
@@ -911,12 +926,6 @@ class NegotiationOrchestrator:
 
                     weight = 1.00
 
-                # ---------------------------------------------
-                # CURRENT AGENT INFLUENCE
-                # The proposing agent should not generate
-                # exactly the same allocation every time.
-                # ---------------------------------------------
-
                 if (
                     proposing_agent
                     and agent_name
@@ -927,9 +936,7 @@ class NegotiationOrchestrator:
 
                 weights.append(weight)
 
-            # =================================================
-            # HUMAN REQUEST / OFFER INFLUENCE
-            # =================================================
+            # Human preference influence
 
             preference = human_preferences.get(
                 resource
@@ -937,103 +944,60 @@ class NegotiationOrchestrator:
 
             if preference:
 
-                human_action = str(
-                    preference.get(
-                        "action",
-                        "",
-                    )
-                ).upper()
+                try:
 
-                human_amount = int(
-                    preference.get(
-                        "amount",
-                        0,
+                    human_amount = int(
+                        preference.get(
+                            "amount",
+                            0,
+                        )
                     )
+
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+
+                    human_amount = 0
+
+                ratio = (
+
+                    human_amount / total
+
+                    if total > 0
+
+                    else 0
                 )
 
-                # Human request affects the distribution
+                if ratio >= 0.80:
 
-                if human_action in (
-                    "REQUEST",
-                    "OFFER",
-                    "COUNTER",
-                    "PROPOSE",
-                ):
-
-                    ratio = (
-                        human_amount / total
-                        if total > 0
-                        else 0
-                    )
-
-                    # Strong human request causes agents
-                    # to negotiate differently.
-
-                    if ratio >= 0.80:
-
-                        for i in range(
-                            len(weights)
-                        ):
-
-                            weights[i] += (
-                                0.15 * (i + 1)
-                            )
-
-                    elif ratio >= 0.50:
-
-                        for i in range(
-                            len(weights)
-                        ):
-
-                            weights[i] += (
-                                0.10 * (i + 1)
-                            )
-
-                    elif ratio > 0:
-
-                        for i in range(
-                            len(weights)
-                        ):
-
-                            weights[i] += (
-                                0.05 * (i + 1)
-                            )
-
-            # =================================================
-            # PREVIOUS PROPOSAL INFLUENCE
-            # MAKE COUNTER PROPOSALS ACTUALLY CHANGE
-            # =================================================
-
-            if previous_proposal:
-
-                for i, agent_name in enumerate(
-                    agent_names
-                ):
-
-                    previous_amount = (
-                        previous_proposal
-                        .get(agent_name, {})
-                        .get(resource, 0)
-                    )
-
-                    if (
-                        proposing_agent
-                        and agent_name
-                        == proposing_agent.name
+                    for i in range(
+                        len(weights)
                     ):
 
-                        # Proposing agent attempts
-                        # to improve its own position.
+                        weights[i] += (
+                            0.15 * (i + 1)
+                        )
 
-                        weights[i] += 0.20
+                elif ratio >= 0.50:
 
-                    elif previous_amount > 0:
+                    for i in range(
+                        len(weights)
+                    ):
 
-                        weights[i] += 0.05
+                        weights[i] += (
+                            0.10 * (i + 1)
+                        )
 
-            # =================================================
-            # CALCULATE ALLOCATION
-            # =================================================
+                elif ratio > 0:
+
+                    for i in range(
+                        len(weights)
+                    ):
+
+                        weights[i] += (
+                            0.05 * (i + 1)
+                        )
 
             total_weight = sum(weights)
 
@@ -1050,40 +1014,31 @@ class NegotiationOrchestrator:
 
             remaining = total - allocated
 
-            # Give remaining units to agents
-            # based on proposal order.
+            start_index = 0
 
-            if remaining > 0:
+            if proposing_agent:
 
-                start_index = 0
+                try:
 
-                if proposing_agent:
+                    start_index = agent_names.index(
+                        proposing_agent.name
+                    )
 
-                    try:
+                except ValueError:
 
-                        start_index = (
-                            agent_names.index(
-                                proposing_agent.name
-                            )
-                        )
+                    start_index = 0
 
-                    except ValueError:
+            for offset in range(remaining):
 
-                        start_index = 0
+                target_index = (
 
-                for offset in range(remaining):
+                    start_index + offset
 
-                    target_index = (
-                        start_index + offset
-                    ) % len(raw_allocations)
+                ) % len(raw_allocations)
 
-                    raw_allocations[
-                        target_index
-                    ] += 1
-
-            # =================================================
-            # SAVE RESOURCE ALLOCATION
-            # =================================================
+                raw_allocations[
+                    target_index
+                ] += 1
 
             for index, agent_name in enumerate(
                 agent_names
@@ -1122,9 +1077,7 @@ class NegotiationOrchestrator:
             {},
         )
 
-        # =====================================================
-        # FINAL ROUND
-        # =====================================================
+        # Final round
 
         if (
             round_number
@@ -1153,10 +1106,6 @@ class NegotiationOrchestrator:
 
                 "action": "ACCEPT",
             }
-
-        # =====================================================
-        # GENERATE AGENT-SPECIFIC PROPOSAL
-        # =====================================================
 
         proposal = self._generate_complete_allocation(
 
@@ -1195,8 +1144,8 @@ class NegotiationOrchestrator:
 
             "reasoning": (
                 f"{agent.name} generated a proposal "
-                "based on personality, previous "
-                "negotiation state, and human input."
+                "based on personality, negotiation "
+                "state, and human input."
             ),
 
             "stance": str(
@@ -1272,9 +1221,7 @@ class NegotiationOrchestrator:
                 "No negotiation agents configured."
             )
 
-        # =====================================================
-        # NEGOTIATION ALREADY ENDED
-        # =====================================================
+        # Already ended
 
         if state.get("negotiation_ended"):
 
@@ -1291,9 +1238,7 @@ class NegotiationOrchestrator:
                 "",
             )
 
-        # =====================================================
-        # MAX ROUND SAFETY
-        # =====================================================
+        # Maximum round safety
 
         if (
             state["current_round"]
@@ -1334,7 +1279,7 @@ class NegotiationOrchestrator:
         ]
 
         # =====================================================
-        # AI CONTEXT
+        # BUILD AI CONTEXT
         # =====================================================
 
         context = {
@@ -1361,8 +1306,6 @@ class NegotiationOrchestrator:
                     {},
                 ),
 
-            # IMPORTANT:
-            # Human preferences are sent to AI.
             "human_preferences":
                 state.get(
                     "human_preferences",
@@ -1566,8 +1509,11 @@ class NegotiationOrchestrator:
         ):
 
             if incoming_proposal:
+
                 action = "COUNTER"
+
             else:
+
                 action = "OFFER"
 
         generated_proposal = {}
@@ -1609,7 +1555,7 @@ class NegotiationOrchestrator:
                 )
 
                 # IMPORTANT:
-                # NEW PROPOSAL REPLACES OLD PROPOSAL
+                # New proposal completely replaces old proposal
 
                 state["current_proposal"] = dict(
                     generated_proposal
@@ -1621,7 +1567,7 @@ class NegotiationOrchestrator:
                     generated_proposal
                 )
 
-                # New proposal resets acceptances
+                # New proposal resets acceptance
 
                 state["accepted_proposals"] = {}
 
@@ -1788,10 +1734,40 @@ class NegotiationOrchestrator:
 
                 state["consensus"] = 0.0
 
+            # =================================================
+            # DEADLOCK DETECTION
+            # =================================================
+
+            deadlock_detected = False
+
+            if detect_deadlock:
+
+                try:
+
+                    deadlock_detected = bool(
+                        detect_deadlock(
+                            state,
+                            state["max_rounds"],
+                        )
+                    )
+
+                except Exception:
+
+                    deadlock_detected = False
+
+            state[
+                "deadlock_detected"
+            ] = deadlock_detected
+
+            # =================================================
+            # MAXIMUM ROUNDS
+            # =================================================
+
             if (
 
                 state["current_round"]
                 >= state["max_rounds"]
+
             ):
 
                 if not state.get(
@@ -1800,7 +1776,18 @@ class NegotiationOrchestrator:
 
                     self._end_as_deadlock(state)
 
+            # =================================================
+            # CONTINUE NEXT ROUND
+            # =================================================
+
             else:
+
+                state["prev_proposals"] = dict(
+                    state.get(
+                        "last_proposals",
+                        {},
+                    )
+                )
 
                 state["current_round"] += 1
 
@@ -1842,7 +1829,10 @@ class NegotiationOrchestrator:
             "deadlock_no_consensus"
         )
 
-        state["final_allocation"] = None
+        state["final_allocation"] = (
+            state.get("current_proposal")
+            or None
+        )
 
         state["final_report"] = (
             self._build_final_report(state)
@@ -2022,6 +2012,10 @@ class NegotiationOrchestrator:
                 ),
             }
 
+        allocation = state.get(
+            "final_allocation"
+        )
+
         return {
 
             "status":
@@ -2029,7 +2023,8 @@ class NegotiationOrchestrator:
 
             "consensus_reached": False,
 
-            "final_allocation": None,
+            "final_allocation":
+                allocation,
 
             "message": (
 
@@ -2138,6 +2133,21 @@ class NegotiationOrchestrator:
                 "ongoing",
             ),
 
+            "deadlock_detected": state.get(
+                "deadlock_detected",
+                False,
+            ),
+
+            "resolution_attempted": state.get(
+                "resolution_attempted",
+                False,
+            ),
+
+            "resolution_succeeded": state.get(
+                "resolution_succeeded",
+                False,
+            ),
+
             "next_agent": next_agent,
 
             "current_proposal": state.get(
@@ -2177,4 +2187,20 @@ class NegotiationOrchestrator:
                 "max_rounds",
                 5,
             ),
+
+            "agreed_agents": len(
+                state.get(
+                    "accepted_proposals",
+                    {},
+                )
+            ),
+
+            "total_agents": len(
+                state.get(
+                    "agents",
+                    [],
+                )
+            ),
+
+            "gemini_metrics": get_gemini_metrics(),
         }

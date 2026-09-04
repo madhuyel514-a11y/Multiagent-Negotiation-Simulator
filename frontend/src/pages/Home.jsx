@@ -76,7 +76,10 @@ function Home() {
         <div className="mt-8 flex flex-wrap gap-3">
   <button
     type="button"
-    onClick={() => navigate('/scenarios')}
+    onClick={() => {
+      localStorage.setItem('selectedMode', 'ai');
+      navigate('/scenarios');
+    }}
     className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-base font-semibold text-blue-700 shadow-lg transition-all duration-300 hover:scale-105 hover:bg-slate-100"
   >
     <PlayCircle size={18} />
@@ -85,7 +88,10 @@ function Home() {
 
   <button
     type="button"
-    onClick={() => navigate('/practice')}
+    onClick={() => {
+      localStorage.setItem('selectedMode', 'practice');
+      navigate('/scenarios');
+    }}
     className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white transition-all duration-300 hover:scale-105 hover:bg-white/20"
   >
     <Users size={18} />

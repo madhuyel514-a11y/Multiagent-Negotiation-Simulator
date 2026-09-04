@@ -22,6 +22,8 @@ class BaseAgent:
         )
 
     async def act(self, context: dict, gemini_ask) -> dict:
+        """Produce a proposal or response using the Gemini service."""
+
         prompt = self.system_prompt(context.get("scenario", {}))
 
         prompt += f"\nPersonality: {self.personality}"
@@ -35,5 +37,11 @@ class BaseAgent:
             current_round=context.get("current_round", 1),
             resource_quantities=context.get("resource_quantities", {}),
             current_proposal=context.get("current_proposal", {}),
-            agent_names=[item.get("name") for item in context.get("agents", [])],
+            agent_names=[
+                item.get("name")
+                for item in context.get("agents", [])
+            ],
+            max_rounds=context.get("max_rounds", 5),
+            scenario=context.get("scenario", {}),
+            stubborn_until=context.get("stubborn_until"),
         )

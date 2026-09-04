@@ -17,24 +17,21 @@ import {
 
 const API_URL = 'http://127.0.0.1:8000';
 
-
-// =========================================================
-// PRACTICE MODE
-// =========================================================
-
 function PracticeMode() {
-
   // =======================================================
   // LOAD NEGOTIATION CONFIGURATION
   // =======================================================
 
   const getNegotiationConfig = () => {
     try {
-      const storedConfig =
-        localStorage.getItem('negotiationConfig');
+      const storedConfig = localStorage.getItem('negotiationConfig');
 
       if (storedConfig) {
-        return JSON.parse(storedConfig);
+        const parsed = JSON.parse(storedConfig);
+
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
       }
     } catch (error) {
       console.error(
@@ -46,23 +43,20 @@ function PracticeMode() {
     return null;
   };
 
-
-  const initialConfig =
-    getNegotiationConfig();
-
-
-  // =======================================================
-  // INITIAL CONFIGURATION
-  // =======================================================
+  const initialConfig = getNegotiationConfig();
 
   const initialScenario =
     initialConfig?.scenario || null;
 
   const initialAgents =
-    initialConfig?.agents || [];
+    Array.isArray(initialConfig?.agents)
+      ? initialConfig.agents
+      : [];
 
   const initialMaxRounds =
-    initialConfig?.max_rounds || 3;
+    Number(initialConfig?.max_rounds) > 0
+      ? Number(initialConfig.max_rounds)
+      : 5;
 
   const initialResourceQuantities =
     initialConfig?.resourceQuantities || {
@@ -72,7 +66,6 @@ function PracticeMode() {
       'Temporary Shelters': 150,
       'Emergency Supplies': 300,
     };
-
 
   // =======================================================
   // RESOURCE HELPER
@@ -94,12 +87,8 @@ function PracticeMode() {
     ];
   };
 
-
   const initialResources =
-    getResourceNames(
-      initialResourceQuantities
-    );
-
+    getResourceNames(initialResourceQuantities);
 
   // =======================================================
   // STATE
@@ -120,9 +109,7 @@ function PracticeMode() {
   ] = useState(initialResourceQuantities);
 
   const [resource, setResource] =
-    useState(
-      initialResources[0] || 'Food'
-    );
+    useState(initialResources[0] || 'Food');
 
   const [amount, setAmount] =
     useState('');
@@ -140,7 +127,7 @@ function PracticeMode() {
     useState(1);
 
   const [status, setStatus] =
-    useState('Starting practice...');
+    useState('Starting negotiation...');
 
   const [sessionStatus, setSessionStatus] =
     useState('Active');
@@ -175,21 +162,17 @@ function PracticeMode() {
   const transcriptEndRef =
     useRef(null);
 
-
   // =======================================================
-  // AUTO SCROLL TRANSCRIPT
+  // AUTO SCROLL
   // =======================================================
 
   useEffect(() => {
-
     if (transcriptEndRef.current) {
       transcriptEndRef.current.scrollIntoView({
         behavior: 'smooth',
       });
     }
-
-  }, [transcript]);
-
+  }, [transcript, loading]);
 
   // =======================================================
   // FORMAT ACTION
@@ -198,7 +181,6 @@ function PracticeMode() {
   const normalizeAction = (
     value = 'PROPOSE'
   ) => {
-
     const upper =
       String(value).toUpperCase();
 
@@ -222,16 +204,18 @@ function PracticeMode() {
       return 'PROPOSE';
     }
 
+    if (upper.includes('PROPOSE')) {
+      return 'PROPOSE';
+    }
+
     return upper || 'PROPOSE';
   };
 
-
   // =======================================================
-  // GET AGENT DISPLAY NAME
+  // AGENT DISPLAY NAME
   // =======================================================
 
   const getAgentName = (name) => {
-
     if (!name) {
       return 'AI AGENT';
     }
@@ -241,13 +225,11 @@ function PracticeMode() {
       .toUpperCase();
   };
 
-
   // =======================================================
-  // GET AGENT TYPE
+  // AGENT THEME
   // =======================================================
 
   const getAgentTheme = (agentName) => {
-
     const name =
       String(agentName || '').toLowerCase();
 
@@ -255,8 +237,6 @@ function PracticeMode() {
       return {
         header:
           'bg-gradient-to-r from-blue-700 to-blue-600',
-        badge:
-          'bg-blue-100 text-blue-700',
         border:
           'border-blue-200',
         dot:
@@ -268,8 +248,6 @@ function PracticeMode() {
       return {
         header:
           'bg-gradient-to-r from-emerald-700 to-emerald-600',
-        badge:
-          'bg-emerald-100 text-emerald-700',
         border:
           'border-emerald-200',
         dot:
@@ -277,14 +255,10 @@ function PracticeMode() {
       };
     }
 
-    if (
-      name.includes('district')
-    ) {
+    if (name.includes('district')) {
       return {
         header:
           'bg-gradient-to-r from-amber-600 to-orange-500',
-        badge:
-          'bg-amber-100 text-amber-700',
         border:
           'border-amber-200',
         dot:
@@ -296,8 +270,6 @@ function PracticeMode() {
       return {
         header:
           'bg-gradient-to-r from-violet-700 to-purple-600',
-        badge:
-          'bg-violet-100 text-violet-700',
         border:
           'border-violet-200',
         dot:
@@ -308,8 +280,6 @@ function PracticeMode() {
     return {
       header:
         'bg-gradient-to-r from-slate-700 to-slate-600',
-      badge:
-        'bg-slate-100 text-slate-700',
       border:
         'border-slate-200',
       dot:
@@ -317,16 +287,12 @@ function PracticeMode() {
     };
   };
 
-
   // =======================================================
-  // EXTRACT PROPOSAL FROM RESPONSE
+  // EXTRACT PROPOSAL
   // =======================================================
 
   const extractProposal = (data) => {
-
-    if (!data) {
-      return null;
-    }
+    if (!data) return null;
 
     return (
       data?.current_proposal ||
@@ -339,7 +305,6 @@ function PracticeMode() {
     );
   };
 
-
   // =======================================================
   // ADD TRANSCRIPT ITEM
   // =======================================================
@@ -349,40 +314,32 @@ function PracticeMode() {
     actionType,
     text,
     proposal = null,
-    roundNumber = round,
+    roundNumber,
   }) => {
-
     setTranscript((previous) => [
       ...previous,
       {
-        id:
-          `${Date.now()}-${Math.random()}`,
-        sender:
-          sender || 'AI Agent',
-        action:
-          normalizeAction(actionType),
+        id: `${Date.now()}-${Math.random()}`,
+        sender: sender || 'AI Agent',
+        action: normalizeAction(actionType),
         text:
           text ||
           'No response message available.',
         proposal,
-        round:
-          roundNumber || round,
+        round: roundNumber || round,
       },
     ]);
   };
-
 
   // =======================================================
   // START SESSION
   // =======================================================
 
   const startSession = async () => {
-
     if (!selectedScenario) {
-
       setTranscript([
         {
-          id: 'configuration-error',
+          id: `config-error-${Date.now()}`,
           sender: 'System',
           action: 'SYSTEM',
           text:
@@ -392,130 +349,89 @@ function PracticeMode() {
         },
       ]);
 
-      setStatus(
-        'Configuration missing'
-      );
-
-      setSessionStatus(
-        'Inactive'
-      );
+      setStatus('Configuration missing');
+      setSessionStatus('Inactive');
 
       return;
     }
 
-
     try {
-
       setLoading(true);
+      setStatus('Starting negotiation...');
+      setSessionStatus('Active');
 
-      setStatus(
-        'Starting negotiation...'
-      );
+      const response = await fetch(
+        `${API_URL}/api/negotiation/start`,
+        {
+          method: 'POST',
 
-      setSessionStatus(
-        'Active'
-      );
+          headers: {
+            'Content-Type': 'application/json',
+          },
 
-
-      const response =
-        await fetch(
-          `${API_URL}/api/negotiation/start`,
-          {
-            method: 'POST',
-
-            headers: {
-              'Content-Type':
-                'application/json',
+          body: JSON.stringify({
+            scenario: selectedScenario,
+            agents: agents,
+            config: {
+              max_rounds: maxRounds,
+              resourceQuantities:
+                resourceQuantities,
             },
-
-            body: JSON.stringify({
-              scenario:
-                selectedScenario,
-
-              agents:
-                agents,
-
-              config: {
-                max_rounds:
-                  maxRounds,
-
-                resourceQuantities:
-                  resourceQuantities,
-              },
-            }),
-          }
-        );
-
+          }),
+        }
+      );
 
       const responseText =
         await response.text();
 
-
       if (!response.ok) {
-
         throw new Error(
           `Start session failed: ${response.status} ${responseText}`
         );
       }
 
-
       const data =
         JSON.parse(responseText);
-
 
       console.log(
         'SESSION START RESPONSE:',
         data
       );
 
-
       if (!data?.session_id) {
-
         throw new Error(
           'Backend did not return session_id.'
         );
       }
 
+      setSessionId(data.session_id);
 
-      // IMPORTANT
-      // Store the exact session ID returned by backend
+      const backendRound =
+        Number(data?.round) ||
+        1;
 
-      setSessionId(
-        data.session_id
-      );
-
-
-      setRound(
-        Number(data?.round) || 1
-      );
-
+      setRound(backendRound);
 
       const proposal =
         extractProposal(data);
 
-
       if (proposal) {
+        setCurrentProposal(proposal);
+      }
 
-        setCurrentProposal(
-          proposal
+      if (data?.resourceQuantities) {
+        setResourceQuantities(
+          data.resourceQuantities
         );
       }
 
-
       setBackendConnected(true);
 
+      // IMPORTANT:
+      // Enable buttons after session starts
+      setStatus('Your turn');
 
-      setStatus(
-        'Your turn'
-      );
-
-
-      setSessionStatus(
-        'Active'
-      );
-
-
-      // Start transcript
+      setSessionStatus('Active');
 
       setTranscript([
         {
@@ -524,34 +440,24 @@ function PracticeMode() {
           action: 'SYSTEM',
           text:
             data?.message ||
-            'Negotiation session started successfully.',
+            'Negotiation session started successfully. You can now make your proposal.',
           proposal: null,
-          round:
-            Number(data?.round) || 1,
+          round: backendRound,
         },
       ]);
-
-
     } catch (error) {
-
       console.error(
         'Start session error:',
         error
       );
 
-
       setSessionId(null);
 
       setBackendConnected(false);
 
-      setStatus(
-        'Backend unavailable'
-      );
+      setStatus('Backend unavailable');
 
-      setSessionStatus(
-        'Inactive'
-      );
-
+      setSessionStatus('Inactive');
 
       setTranscript([
         {
@@ -564,23 +470,16 @@ function PracticeMode() {
           round: 1,
         },
       ]);
-
-
     } finally {
-
       setLoading(false);
-
     }
-
   };
-
 
   // =======================================================
   // AUTO START
   // =======================================================
 
   useEffect(() => {
-
     if (autoStartRef.current) {
       return;
     }
@@ -588,9 +487,7 @@ function PracticeMode() {
     autoStartRef.current = true;
 
     startSession();
-
   }, []);
-
 
   // =======================================================
   // SEND TO BACKEND
@@ -598,11 +495,11 @@ function PracticeMode() {
 
   const sendToBackend = async (
     humanMessage,
-    selectedAction
+    selectedAction,
+    selectedResource = resource,
+    selectedAmount = amount
   ) => {
-
     if (!sessionId) {
-
       addTranscriptItem({
         sender: 'System',
         actionType: 'ERROR',
@@ -613,92 +510,63 @@ function PracticeMode() {
       return;
     }
 
-
     try {
-
       setLoading(true);
 
       setStatus(
         'AI Agent is responding...'
       );
 
-
       const startTime =
         performance.now();
 
+      const response = await fetch(
+        `${API_URL}/api/practice/turn`,
+        {
+          method: 'POST',
 
-      const response =
-        await fetch(
-          `${API_URL}/api/practice/turn`,
-          {
-            method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
 
-            headers: {
-              'Content-Type':
-                'application/json',
-            },
-
-            body: JSON.stringify({
-              session_id:
-                sessionId,
-
-              message:
-                humanMessage,
-
-              resource:
-                resource,
-
-              amount:
-                amount
-                  ? Number(amount)
-                  : 0,
-
-              action:
-                selectedAction,
-            }),
-          }
-        );
-
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: humanMessage,
+            resource: selectedResource,
+            amount:
+              selectedAmount &&
+              Number(selectedAmount) > 0
+                ? Number(selectedAmount)
+                : 0,
+            action: selectedAction,
+          }),
+        }
+      );
 
       const endTime =
         performance.now();
 
-
       const latency =
         (endTime - startTime) / 1000;
-
 
       setTotalLatency(
         (previous) =>
           previous + latency
       );
 
-
       setApiRequests(
         (previous) =>
           previous + 1
       );
 
-
       const responseText =
         await response.text();
 
-
       if (!response.ok) {
-
-        if (
-          response.status === 404
-        ) {
-
+        if (response.status === 404) {
           setSessionId(null);
-
-          setSessionStatus(
-            'Inactive'
-          );
-
-          setStatus(
-            'Session expired'
-          );
+          setSessionStatus('Inactive');
+          setStatus('Session expired');
         }
 
         throw new Error(
@@ -706,132 +574,119 @@ function PracticeMode() {
         );
       }
 
-
       const data =
         JSON.parse(responseText);
-
 
       console.log(
         'PRACTICE TURN RESPONSE:',
         data
       );
 
-
-      // =================================================
-      // BACKEND CONNECTION SUCCESSFUL
-      // =================================================
-
       setBackendConnected(true);
-
-
-      // =================================================
-      // GET AI RESPONSE
-      // =================================================
 
       const aiResponse =
         data?.ai_response ||
         data?.response ||
         data;
 
+      // ===================================================
+      // ROUND HANDLING
+      // ===================================================
 
-      // =================================================
-      // UPDATE ROUND
-      // =================================================
-
-      const newRound =
+      let backendRound =
         Number(
-          data?.round ||
-          aiResponse?.round ||
-          round
+          data?.round ??
+          aiResponse?.round
         );
 
-
-      if (newRound) {
-
-        setRound(
-          Math.min(
-            newRound,
-            maxRounds
-          )
-        );
+      if (
+        !backendRound ||
+        backendRound < 1
+      ) {
+        backendRound = round;
       }
 
+      if (
+        backendRound > maxRounds
+      ) {
+        backendRound = maxRounds;
+      }
 
-      // =================================================
-      // UPDATE PROPOSAL
-      // =================================================
+      setRound(backendRound);
+
+      // ===================================================
+      // PROPOSAL
+      // ===================================================
 
       const proposal =
         extractProposal(data);
 
-
       if (proposal) {
-
-        setCurrentProposal(
-          proposal
-        );
+        setCurrentProposal(proposal);
       }
 
+      // ===================================================
+      // RESOURCES
+      // ===================================================
 
-      // =================================================
-      // UPDATE RESOURCES
-      // =================================================
+      const updatedResources =
+        data?.resourceQuantities ||
+        data?.resources ||
+        aiResponse?.resourceQuantities ||
+        aiResponse?.resources;
 
-      if (
-        data?.resourceQuantities
-      ) {
-
+      if (updatedResources) {
         setResourceQuantities(
-          data.resourceQuantities
+          updatedResources
         );
       }
 
+      // ===================================================
+      // TOKENS
+      // ===================================================
 
-      // =================================================
-      // TOKEN METRICS
-      // =================================================
+      const newInputTokens =
+        data?.input_tokens ??
+        aiResponse?.input_tokens ??
+        0;
 
-      if (
-        data?.input_tokens
-      ) {
+      const newOutputTokens =
+        data?.output_tokens ??
+        aiResponse?.output_tokens ??
+        0;
 
+      if (Number(newInputTokens) > 0) {
         setInputTokens(
           (previous) =>
             previous +
-            Number(
-              data.input_tokens
-            )
+            Number(newInputTokens)
         );
       }
 
-
-      if (
-        data?.output_tokens
-      ) {
-
+      if (Number(newOutputTokens) > 0) {
         setOutputTokens(
           (previous) =>
             previous +
-            Number(
-              data.output_tokens
-            )
+            Number(newOutputTokens)
         );
       }
 
+      // ===================================================
+      // AI RESPONSE MESSAGE
+      // ===================================================
 
-      // =================================================
-      // DISPLAY AI RESPONSE
-      // =================================================
+      const aiMessage =
+        aiResponse?.message ||
+        aiResponse?.text ||
+        data?.message;
 
-      if (
-        aiResponse?.message
-      ) {
-
+      if (aiMessage) {
         addTranscriptItem({
           sender:
             aiResponse?.agent ||
             aiResponse?.sender ||
             data?.agent ||
+            data?.sender ||
             'AI Agent',
 
           actionType:
@@ -839,28 +694,32 @@ function PracticeMode() {
             data?.action ||
             'PROPOSE',
 
-          text:
-            aiResponse.message,
+          text: aiMessage,
 
-          proposal:
-            proposal,
+          proposal,
 
           roundNumber:
-            newRound || round,
+            backendRound,
         });
-
       }
 
-
-      // =================================================
+      // ===================================================
       // NEGOTIATION STATUS
-      // =================================================
+      // ===================================================
 
-      if (
+      const consensusReached =
         data?.consensus_reached === true ||
-        aiResponse?.consensus_reached === true
-      ) {
+        aiResponse?.consensus_reached === true;
 
+      const maxRoundsReached =
+        data?.max_rounds_reached === true ||
+        aiResponse?.max_rounds_reached === true;
+
+      const negotiationEnded =
+        data?.negotiation_ended === true ||
+        aiResponse?.negotiation_ended === true;
+
+      if (consensusReached) {
         setSessionStatus(
           'Agreement reached'
         );
@@ -868,12 +727,9 @@ function PracticeMode() {
         setStatus(
           'Negotiation complete'
         );
-
       } else if (
-        data?.max_rounds_reached === true ||
-        aiResponse?.max_rounds_reached === true
+        maxRoundsReached
       ) {
-
         setSessionStatus(
           'Deadlock'
         );
@@ -881,12 +737,9 @@ function PracticeMode() {
         setStatus(
           'Negotiation ended'
         );
-
       } else if (
-        data?.negotiation_ended === true ||
-        aiResponse?.negotiation_ended === true
+        negotiationEnded
       ) {
-
         setSessionStatus(
           'Negotiation ended'
         );
@@ -894,27 +747,28 @@ function PracticeMode() {
         setStatus(
           'Negotiation complete'
         );
-
-      } else {
-
+      } else if (
+        backendRound >= maxRounds
+      ) {
         setSessionStatus(
-          'Active'
+          'Deadlock'
         );
 
         setStatus(
-          'Your turn'
+          'Negotiation ended'
         );
+      } else {
+        // IMPORTANT:
+        // THIS ENABLES THE BUTTONS AGAIN
+        setSessionStatus('Active');
 
+        setStatus('Your turn');
       }
-
-
     } catch (error) {
-
       console.error(
         'Negotiation turn error:',
         error
       );
-
 
       addTranscriptItem({
         sender: 'System',
@@ -923,35 +777,24 @@ function PracticeMode() {
           `Negotiation error: ${error.message}`,
       });
 
-
       setBackendConnected(false);
 
-
-      if (
-        sessionStatus !== 'Inactive'
-      ) {
-
-        setStatus(
-          'Connection error'
-        );
+      // Allow user to try again
+      if (sessionId) {
+        setStatus('Your turn');
+      } else {
+        setStatus('Connection error');
       }
-
-
     } finally {
-
       setLoading(false);
-
     }
-
   };
 
-
   // =======================================================
-  // SEND OFFER
+  // SEND OFFER / REQUEST
   // =======================================================
 
   const handleSend = async () => {
-
     if (
       loading ||
       status !== 'Your turn'
@@ -959,60 +802,40 @@ function PracticeMode() {
       return;
     }
 
-
     let finalMessage =
       message.trim();
 
-
     if (!finalMessage) {
-
       if (
         amount &&
         Number(amount) > 0
       ) {
-
         finalMessage =
           `${action} ${amount} units of ${resource}.`;
-
       } else {
-
         finalMessage =
           `${action} ${resource}.`;
-
       }
-
     }
-
-
-    // =====================================================
-    // DISPLAY HUMAN MESSAGE
-    // =====================================================
 
     addTranscriptItem({
       sender: 'You',
-
       actionType: action,
-
       text: finalMessage,
-
       proposal: null,
-
       roundNumber: round,
     });
 
-
     await sendToBackend(
       finalMessage,
-      action
+      action,
+      resource,
+      amount
     );
 
-
     setMessage('');
-
     setAmount('');
-
   };
-
 
   // =======================================================
   // ACCEPT / REJECT / COUNTER
@@ -1021,7 +844,6 @@ function PracticeMode() {
   const handleDecision = async (
     decision
   ) => {
-
     if (
       loading ||
       status !== 'Your turn'
@@ -1029,79 +851,48 @@ function PracticeMode() {
       return;
     }
 
-
-    // Backend-friendly action values
-
     let backendAction =
       decision;
-
 
     let decisionMessage =
       decision;
 
-
-    if (
-      decision === 'Accept Offer'
-    ) {
-
-      backendAction =
-        'ACCEPT';
+    if (decision === 'Accept Offer') {
+      backendAction = 'ACCEPT';
 
       decisionMessage =
         'I accept the current proposal.';
-
     }
 
-
-    if (
-      decision === 'Reject Offer'
-    ) {
-
-      backendAction =
-        'REJECT';
+    if (decision === 'Reject Offer') {
+      backendAction = 'REJECT';
 
       decisionMessage =
         'I reject the current proposal.';
-
     }
 
-
-    if (
-      decision === 'Counter Offer'
-    ) {
-
-      backendAction =
-        'COUNTER';
+    if (decision === 'Counter Offer') {
+      backendAction = 'COUNTER';
 
       decisionMessage =
         'I would like to make a counter proposal.';
-
     }
-
 
     addTranscriptItem({
       sender: 'You',
-
-      actionType:
-        backendAction,
-
-      text:
-        decisionMessage,
-
+      actionType: backendAction,
+      text: decisionMessage,
       proposal: null,
-
-      roundNumber:
-        round,
+      roundNumber: round,
     });
-
 
     await sendToBackend(
       decisionMessage,
-      backendAction
+      backendAction,
+      resource,
+      amount
     );
-
   };
-
 
   // =======================================================
   // ENTER KEY
@@ -1110,20 +901,15 @@ function PracticeMode() {
   const handleKeyDown = (
     event
   ) => {
-
     if (
       event.key === 'Enter' &&
       !event.shiftKey
     ) {
-
       event.preventDefault();
 
       handleSend();
-
     }
-
   };
-
 
   // =======================================================
   // NEW NEGOTIATION
@@ -1131,19 +917,16 @@ function PracticeMode() {
 
   const handleNewNegotiation =
     async () => {
-
       setTranscript([]);
 
       setRound(1);
 
       setSessionId(null);
 
-      setSessionStatus(
-        'Active'
-      );
+      setSessionStatus('Active');
 
       setStatus(
-        'Starting practice...'
+        'Starting negotiation...'
       );
 
       setMessage('');
@@ -1163,9 +946,7 @@ function PracticeMode() {
       setTotalLatency(0);
 
       await startSession();
-
     };
-
 
   // =======================================================
   // RESOURCE LIST
@@ -1176,14 +957,12 @@ function PracticeMode() {
       resourceQuantities
     );
 
-
   // =======================================================
-  // TOTAL TOKENS
+  // METRICS
   // =======================================================
 
   const totalTokens =
     inputTokens + outputTokens;
-
 
   const averageLatency =
     apiRequests > 0
@@ -1193,27 +972,19 @@ function PracticeMode() {
         ).toFixed(2)
       : '0.00';
 
-
   // =======================================================
-  // PROPOSAL CARD
+  // PROPOSAL DISPLAY
   // =======================================================
 
   const ProposalDisplay = ({
     proposal,
   }) => {
-
     if (!proposal) {
       return null;
     }
 
-
-    // =====================================================
-    // CHECK FOR AGENT / DISTRICT ALLOCATION STRUCTURE
-    // =====================================================
-
     const entries =
       Object.entries(proposal);
-
 
     const hasNestedObjects =
       entries.some(
@@ -1223,106 +994,70 @@ function PracticeMode() {
           !Array.isArray(value)
       );
 
-
-    // =====================================================
-    // NESTED ALLOCATION
-    // =====================================================
-
     if (hasNestedObjects) {
-
       return (
-
         <div className="mt-5">
-
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
             Proposed Allocation
           </p>
 
-
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-
             {entries.map(
               ([agentName, resources]) => (
-
                 <div
                   key={agentName}
                   className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
                 >
-
                   <h4 className="mb-3 text-sm font-bold text-slate-800">
                     {agentName}
                   </h4>
 
-
                   <div className="flex flex-wrap gap-2">
-
                     {Object.entries(
                       resources || {}
                     ).map(
-                      ([resourceName, value]) => (
-
+                      ([
+                        resourceName,
+                        value,
+                      ]) => (
                         <span
                           key={resourceName}
                           className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700"
                         >
                           {resourceName}: {value}
                         </span>
-
                       )
                     )}
-
                   </div>
-
                 </div>
-
               )
             )}
-
           </div>
-
         </div>
-
       );
-
     }
 
-
-    // =====================================================
-    // SIMPLE RESOURCE PROPOSAL
-    // =====================================================
-
     return (
-
       <div className="mt-5">
-
         <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
           Proposed Allocation
         </p>
 
-
         <div className="flex flex-wrap gap-2">
-
           {entries.map(
             ([resourceName, value]) => (
-
               <span
                 key={resourceName}
                 className="rounded-full bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"
               >
                 {resourceName}: {value}
               </span>
-
             )
           )}
-
         </div>
-
       </div>
-
     );
-
   };
-
 
   // =======================================================
   // TRANSCRIPT CARD
@@ -1331,23 +1066,15 @@ function PracticeMode() {
   const TranscriptCard = ({
     item,
   }) => {
-
     const theme =
-      getAgentTheme(
-        item.sender
-      );
-
+      getAgentTheme(item.sender);
 
     const isSystem =
       item.sender === 'System';
 
-
     if (isSystem) {
-
       return (
-
         <div className="relative ml-7 rounded-xl border border-slate-200 bg-slate-50 p-5">
-
           <div className="absolute -left-[34px] top-6 h-4 w-4 rounded-full border-4 border-white bg-slate-400 shadow" />
 
           <p className="text-sm font-semibold text-slate-700">
@@ -1357,370 +1084,212 @@ function PracticeMode() {
           <p className="mt-2 text-sm leading-7 text-slate-600">
             {item.text}
           </p>
-
         </div>
-
       );
-
     }
 
-
     return (
-
       <div className="relative ml-7">
-
-
-        {/* TIMELINE DOT */}
-
         <div
           className={`absolute -left-[34px] top-5 h-4 w-4 rounded-full border-4 border-white shadow ${theme.dot}`}
         />
 
-
-        {/* ROUND */}
-
         <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
-
           Round {item.round} —{' '}
-
-          {getAgentName(
-            item.sender
-          )}
-
-          {' '}Responds
-
+          {getAgentName(item.sender)}
         </p>
-
-
-        {/* CARD */}
 
         <div
           className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${theme.border}`}
         >
-
-
-          {/* CARD HEADER */}
-
           <div
             className={`flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-white ${theme.header}`}
           >
-
             <div className="flex items-center gap-3">
-
-              <MessageSquareText
-                size={18}
-              />
+              <MessageSquareText size={18} />
 
               <h3 className="text-sm font-bold uppercase tracking-wide">
-                {getAgentName(
-                  item.sender
-                )}
+                {getAgentName(item.sender)}
               </h3>
-
             </div>
 
-
             <span className="rounded-md bg-white/90 px-3 py-1 text-xs font-bold text-slate-700">
-
               {item.action}
-
             </span>
-
           </div>
-
-
-          {/* CARD CONTENT */}
 
           <div className="p-5">
-
             <p className="whitespace-pre-line text-sm leading-7 text-slate-700">
-
               {item.text}
-
             </p>
 
-
             <ProposalDisplay
-              proposal={
-                item.proposal
-              }
+              proposal={item.proposal}
             />
-
           </div>
-
         </div>
-
       </div>
-
     );
-
   };
-
 
   // =======================================================
   // MAIN UI
   // =======================================================
 
   return (
-
     <div className="min-h-screen bg-slate-50">
 
-
-      {/* ================================================= */}
       {/* PAGE HEADER */}
-      {/* ================================================= */}
 
       <div className="border-b border-slate-200 bg-white">
-
         <div className="mx-auto max-w-[1500px] px-6 py-6 lg:px-8">
 
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
 
-
             <div>
-
               <div className="flex items-center gap-3">
 
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg">
-
                   <BrainCircuit size={23} />
-
                 </div>
 
-
                 <div>
-
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">
                     Human Participant
                   </p>
 
                   <h1 className="text-2xl font-bold text-slate-900">
-
                     Disaster Relief Negotiation
-
                   </h1>
-
                 </div>
-
               </div>
 
-
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-
                 Practice resource allocation negotiation with
                 multiple AI agents and track proposals in
                 real time.
-
               </p>
-
             </div>
-
 
             <div className="flex flex-wrap items-center gap-3">
 
-
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-
                 <p className="text-xs text-slate-500">
                   Round
                 </p>
 
                 <p className="font-bold text-slate-900">
-
                   {round}/{maxRounds}
-
                 </p>
-
               </div>
 
-
-              <div
-                className={`rounded-xl px-4 py-3 ${
-                  sessionStatus ===
-                  'Agreement reached'
-                    ? 'bg-emerald-50'
-                    : sessionStatus ===
-                      'Deadlock'
-                    ? 'bg-red-50'
-                    : 'bg-blue-50'
-                }`}
-              >
-
+              <div className="rounded-xl bg-blue-50 px-4 py-3">
                 <p className="text-xs text-slate-500">
                   Session Status
                 </p>
 
-                <p
-                  className={`font-bold ${
-                    sessionStatus ===
-                    'Agreement reached'
-                      ? 'text-emerald-700'
-                      : sessionStatus ===
-                        'Deadlock'
-                      ? 'text-red-700'
-                      : 'text-blue-700'
-                  }`}
-                >
-
+                <p className="font-bold text-blue-700">
                   {sessionStatus}
-
                 </p>
-
               </div>
 
             </div>
-
           </div>
-
         </div>
-
       </div>
 
-
-      {/* ================================================= */}
       {/* SCENARIO */}
-      {/* ================================================= */}
 
       <div className="mx-auto max-w-[1500px] px-6 pt-6 lg:px-8">
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
 
-
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
             Active Scenario
           </p>
 
-
           <h2 className="mt-2 text-xl font-bold text-slate-900">
-
             {selectedScenario?.title ||
               selectedScenario?.name ||
               'Flood Relief Resource Allocation'}
-
           </h2>
 
-
           <p className="mt-2 text-sm leading-6 text-slate-600">
-
             {selectedScenario?.objective ||
               'Fairly allocate limited emergency resources while prioritizing life-saving operations.'}
-
           </p>
 
-
           {agents.length > 0 && (
-
             <div className="mt-5 flex flex-wrap gap-3">
 
-              {agents.map(
-                (agent) => (
+              {agents.map((agent) => (
+                <div
+                  key={agent.id || agent.name}
+                  className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2"
+                >
+                  <span className="h-2 w-2 rounded-full bg-amber-400" />
 
-                  <div
-                    key={
-                      agent.id ||
-                      agent.name
-                    }
-                    className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2"
-                  >
+                  <span className="text-sm font-semibold text-slate-700">
+                    {agent.name}
+                  </span>
 
-                    <span className="h-2 w-2 rounded-full bg-amber-400" />
+                  <span className="text-sm text-slate-400">
+                    —
+                  </span>
 
-                    <span className="text-sm font-semibold text-slate-700">
-
-                      {agent.name}
-
-                    </span>
-
-                    <span className="text-sm text-slate-400">
-                      —
-                    </span>
-
-                    <span className="text-sm text-slate-500">
-
-                      {agent.personality}
-
-                    </span>
-
-                  </div>
-
-                )
-              )}
+                  <span className="text-sm text-slate-500">
+                    {agent.personality}
+                  </span>
+                </div>
+              ))}
 
             </div>
-
           )}
 
         </div>
-
       </div>
 
-
-      {/* ================================================= */}
       {/* MAIN DASHBOARD */}
-      {/* ================================================= */}
 
       <div className="mx-auto grid max-w-[1500px] gap-6 px-6 py-6 xl:grid-cols-[minmax(0,1fr)_380px] lg:px-8">
 
-
-        {/* =============================================== */}
-        {/* LEFT — NEGOTIATION TRANSCRIPT */}
-        {/* =============================================== */}
+        {/* LEFT */}
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-
-
-          {/* HEADER */}
 
           <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
 
             <div className="flex items-center gap-3">
 
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-
                 <Activity size={20} />
-
               </div>
 
-
               <div>
-
                 <h2 className="font-bold text-slate-900">
-
                   Negotiation Transcript
-
                 </h2>
 
                 <p className="text-sm text-slate-500">
-
                   Live negotiation history
-
                 </p>
-
               </div>
 
             </div>
 
-
             <span className="text-sm font-semibold text-slate-500">
-
               {transcript.length} turns
-
             </span>
 
           </div>
-
-
-          {/* TRANSCRIPT */}
 
           <div className="max-h-[850px] overflow-y-auto p-6">
 
             <div className="relative border-l-2 border-slate-200 pl-1">
 
-
               <div className="space-y-8">
 
                 {transcript.length === 0 && (
-
                   <div className="ml-7 rounded-xl bg-slate-50 p-8 text-center">
 
                     <MessageSquareText
@@ -1729,34 +1298,23 @@ function PracticeMode() {
                     />
 
                     <p className="mt-3 font-semibold text-slate-600">
-
                       Waiting for negotiation...
-
                     </p>
 
                   </div>
-
                 )}
 
-
-                {transcript.map(
-                  (item) => (
-
-                    <TranscriptCard
-                      key={item.id}
-                      item={item}
-                    />
-
-                  )
-                )}
-
+                {transcript.map((item) => (
+                  <TranscriptCard
+                    key={item.id}
+                    item={item}
+                  />
+                ))}
 
                 {loading && (
-
                   <div className="relative ml-7">
 
                     <div className="absolute -left-[34px] top-4 h-4 w-4 animate-pulse rounded-full border-4 border-white bg-blue-500 shadow" />
-
 
                     <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
 
@@ -1765,91 +1323,57 @@ function PracticeMode() {
                         <div className="h-3 w-3 animate-pulse rounded-full bg-blue-600" />
 
                         <div>
-
                           <p className="font-semibold text-blue-800">
-
                             AI Agents are negotiating...
-
                           </p>
 
                           <p className="mt-1 text-sm text-blue-600">
-
                             Processing the next response.
-
                           </p>
-
                         </div>
 
                       </div>
 
                     </div>
-
                   </div>
-
                 )}
 
-
-                <div
-                  ref={transcriptEndRef}
-                />
+                <div ref={transcriptEndRef} />
 
               </div>
-
             </div>
-
           </div>
 
-
-          {/* ============================================= */}
-          {/* NEGOTIATION INPUT */}
-          {/* ============================================= */}
+          {/* INPUT */}
 
           <div className="border-t border-slate-200 bg-slate-50 p-6">
-
 
             <div className="mb-4 flex items-center justify-between">
 
               <div>
-
                 <h3 className="font-bold text-slate-800">
-
                   Your Response
-
                 </h3>
 
                 <p className="text-sm text-slate-500">
-
                   Make an offer or respond to the current proposal.
-
                 </p>
-
               </div>
 
-
               <span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm">
-
                 {status}
-
               </span>
 
             </div>
 
-
-            {/* RESOURCE CONTROLS */}
-
             <div className="grid gap-3 md:grid-cols-3">
-
-
-              {/* RESOURCE */}
 
               <div className="relative">
 
                 <select
                   value={resource}
                   onChange={(event) =>
-                    setResource(
-                      event.target.value
-                    )
+                    setResource(event.target.value)
                   }
                   disabled={
                     loading ||
@@ -1857,24 +1381,15 @@ function PracticeMode() {
                   }
                   className="w-full appearance-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-100"
                 >
-
-                  {resourceNames.map(
-                    (item) => (
-
-                      <option
-                        key={item}
-                        value={item}
-                      >
-
-                        {item}
-
-                      </option>
-
-                    )
-                  )}
-
+                  {resourceNames.map((item) => (
+                    <option
+                      key={item}
+                      value={item}
+                    >
+                      {item}
+                    </option>
+                  ))}
                 </select>
-
 
                 <ChevronDown
                   size={16}
@@ -1883,17 +1398,12 @@ function PracticeMode() {
 
               </div>
 
-
-              {/* AMOUNT */}
-
               <input
                 type="number"
                 min="1"
                 value={amount}
                 onChange={(event) =>
-                  setAmount(
-                    event.target.value
-                  )
+                  setAmount(event.target.value)
                 }
                 disabled={
                   loading ||
@@ -1903,15 +1413,10 @@ function PracticeMode() {
                 className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-blue-500 disabled:bg-slate-100"
               />
 
-
-              {/* ACTION */}
-
               <select
                 value={action}
                 onChange={(event) =>
-                  setAction(
-                    event.target.value
-                  )
+                  setAction(event.target.value)
                 }
                 disabled={
                   loading ||
@@ -1919,7 +1424,6 @@ function PracticeMode() {
                 }
                 className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-100"
               >
-
                 <option value="Offer">
                   Offer
                 </option>
@@ -1927,13 +1431,9 @@ function PracticeMode() {
                 <option value="Request">
                   Request
                 </option>
-
               </select>
 
             </div>
-
-
-            {/* MESSAGE */}
 
             <div className="mt-3 flex gap-3">
 
@@ -1941,13 +1441,9 @@ function PracticeMode() {
                 type="text"
                 value={message}
                 onChange={(event) =>
-                  setMessage(
-                    event.target.value
-                  )
+                  setMessage(event.target.value)
                 }
-                onKeyDown={
-                  handleKeyDown
-                }
+                onKeyDown={handleKeyDown}
                 disabled={
                   loading ||
                   status !== 'Your turn'
@@ -1955,7 +1451,6 @@ function PracticeMode() {
                 placeholder="Explain your proposal or response..."
                 className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-blue-500 disabled:bg-slate-100"
               />
-
 
               <button
                 type="button"
@@ -1966,27 +1461,18 @@ function PracticeMode() {
                 }
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-
                 <Send size={17} />
-
                 Send
-
               </button>
 
             </div>
 
-
-            {/* DECISION BUTTONS */}
-
             <div className="mt-4 flex flex-wrap gap-3">
-
 
               <button
                 type="button"
                 onClick={() =>
-                  handleDecision(
-                    'Accept Offer'
-                  )
+                  handleDecision('Accept Offer')
                 }
                 disabled={
                   loading ||
@@ -1994,20 +1480,14 @@ function PracticeMode() {
                 }
                 className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50"
               >
-
                 <Check size={17} />
-
                 Accept Offer
-
               </button>
-
 
               <button
                 type="button"
                 onClick={() =>
-                  handleDecision(
-                    'Reject Offer'
-                  )
+                  handleDecision('Reject Offer')
                 }
                 disabled={
                   loading ||
@@ -2015,20 +1495,14 @@ function PracticeMode() {
                 }
                 className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
               >
-
                 <X size={17} />
-
                 Reject Offer
-
               </button>
-
 
               <button
                 type="button"
                 onClick={() =>
-                  handleDecision(
-                    'Counter Offer'
-                  )
+                  handleDecision('Counter Offer')
                 }
                 disabled={
                   loading ||
@@ -2036,206 +1510,124 @@ function PracticeMode() {
                 }
                 className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-bold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
               >
-
-                <ArrowLeftRight
-                  size={17}
-                />
-
+                <ArrowLeftRight size={17} />
                 Counter Offer
-
               </button>
 
             </div>
 
-
-            {/* NEW NEGOTIATION */}
-
-            {(sessionStatus ===
-              'Agreement reached' ||
-              sessionStatus ===
-                'Deadlock' ||
-              sessionStatus ===
-                'Negotiation ended' ||
-              sessionStatus ===
-                'Inactive') && (
+            {(sessionStatus === 'Agreement reached' ||
+              sessionStatus === 'Deadlock' ||
+              sessionStatus === 'Negotiation ended' ||
+              sessionStatus === 'Inactive') && (
 
               <div className="mt-5 border-t border-slate-200 pt-5">
 
                 <button
                   type="button"
-                  onClick={
-                    handleNewNegotiation
-                  }
+                  onClick={handleNewNegotiation}
                   disabled={loading}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50"
                 >
-
                   <RotateCcw size={17} />
-
                   Start New Negotiation
-
                 </button>
 
               </div>
-
             )}
 
           </div>
 
         </section>
 
-
-        {/* =============================================== */}
-        {/* RIGHT — DASHBOARD */}
-        {/* =============================================== */}
+        {/* RIGHT DASHBOARD */}
 
         <aside className="space-y-6">
 
-
-          {/* ============================================= */}
-          {/* RESOURCES AVAILABLE */}
-          {/* ============================================= */}
-
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
 
             <div className="flex items-center gap-3">
 
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-
                 <Database size={20} />
-
               </div>
 
-
               <h2 className="font-bold text-slate-900">
-
                 Resources Available
-
               </h2>
 
             </div>
 
-
             <div className="mt-5 space-y-3">
 
-              {resourceNames.map(
-                (item) => (
+              {resourceNames.map((item) => (
+                <div
+                  key={item}
+                  className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
+                >
+                  <span className="text-sm font-semibold text-slate-600">
+                    {item}
+                  </span>
 
-                  <div
-                    key={item}
-                    className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
-                  >
+                  <span className="text-sm font-bold text-blue-700">
+                    {resourceQuantities[item] ?? 0} units
+                  </span>
 
-                    <span className="text-sm font-semibold text-slate-600">
-
-                      {item}
-
-                    </span>
-
-
-                    <span className="text-sm font-bold text-blue-700">
-
-                      {resourceQuantities[
-                        item
-                      ] ?? 0}{' '}
-
-                      units
-
-                    </span>
-
-                  </div>
-
-                )
-              )}
+                </div>
+              ))}
 
             </div>
 
           </section>
 
-
-          {/* ============================================= */}
-          {/* CURRENT PROPOSAL */}
-          {/* ============================================= */}
-
           {currentProposal && (
 
             <section className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
 
-
               <div className="flex items-center gap-3">
 
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-
-                  <MessageSquareText
-                    size={20}
-                  />
-
+                  <MessageSquareText size={20} />
                 </div>
 
-
                 <h2 className="font-bold text-slate-900">
-
                   Current Proposal
-
                 </h2>
 
               </div>
 
-
               <div className="mt-5">
 
                 <ProposalDisplay
-                  proposal={
-                    currentProposal
-                  }
+                  proposal={currentProposal}
                 />
 
               </div>
 
             </section>
-
           )}
 
-
-          {/* ============================================= */}
-          {/* SYSTEM STATUS */}
-          {/* ============================================= */}
-
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
 
             <div className="flex items-center gap-3">
 
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-
                 <Cpu size={20} />
-
               </div>
 
-
               <h2 className="font-bold text-slate-900">
-
                 System Status
-
               </h2>
 
             </div>
 
-
             <div className="mt-5 space-y-3">
-
-
-              {/* FASTAPI */}
 
               <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
 
                 <span className="text-sm font-medium text-slate-600">
-
                   FastAPI Backend
-
                 </span>
-
 
                 <span
                   className={`rounded-full px-3 py-1 text-xs font-bold ${
@@ -2244,71 +1636,33 @@ function PracticeMode() {
                       : 'bg-red-50 text-red-700'
                   }`}
                 >
-
                   {backendConnected
                     ? 'Connected'
                     : 'Offline'}
-
                 </span>
 
               </div>
 
-
-              {/* ORCHESTRATOR */}
-
               <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
 
                 <span className="text-sm font-medium text-slate-600">
-
                   Negotiation Orchestrator
-
                 </span>
 
-
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-
                   Active
-
                 </span>
 
               </div>
 
-
-              {/* GEMINI */}
-
               <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
 
                 <span className="text-sm font-medium text-slate-600">
-
                   Gemini AI
-
                 </span>
 
-
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-
                   Enabled
-
-                </span>
-
-              </div>
-
-
-              {/* EVALUATION */}
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-
-                <span className="text-sm font-medium text-slate-600">
-
-                  Evaluation Engine
-
-                </span>
-
-
-                <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-
-                  Active
-
                 </span>
 
               </div>
@@ -2317,137 +1671,52 @@ function PracticeMode() {
 
           </section>
 
-
-          {/* ============================================= */}
-          {/* LLM METRICS */}
-          {/* ============================================= */}
-
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
 
             <div className="flex items-center gap-3">
 
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600">
-
                 <Zap size={20} />
-
               </div>
 
-
               <h2 className="font-bold text-slate-900">
-
                 LLM Metrics
-
               </h2>
 
             </div>
 
-
             <div className="mt-5 space-y-3">
 
+              <Metric
+                label="API Requests"
+                value={apiRequests}
+              />
 
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+              <Metric
+                label="Input Tokens"
+                value={inputTokens}
+              />
 
-                <span className="text-sm text-slate-600">
+              <Metric
+                label="Output Tokens"
+                value={outputTokens}
+              />
 
-                  API Requests
+              <Metric
+                label="Total Tokens"
+                value={totalTokens}
+              />
 
-                </span>
+              <Metric
+                label="Average Latency"
+                value={`${averageLatency}s`}
+                icon={<Clock size={14} />}
+              />
 
-                <span className="font-bold text-slate-900">
-
-                  {apiRequests}
-
-                </span>
-
-              </div>
-
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-
-                <span className="text-sm text-slate-600">
-
-                  Input Tokens
-
-                </span>
-
-                <span className="font-bold text-slate-900">
-
-                  {inputTokens}
-
-                </span>
-
-              </div>
-
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-
-                <span className="text-sm text-slate-600">
-
-                  Output Tokens
-
-                </span>
-
-                <span className="font-bold text-slate-900">
-
-                  {outputTokens}
-
-                </span>
-
-              </div>
-
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-
-                <span className="text-sm text-slate-600">
-
-                  Total Tokens
-
-                </span>
-
-                <span className="font-bold text-slate-900">
-
-                  {totalTokens}
-
-                </span>
-
-              </div>
-
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-
-                <span className="flex items-center gap-2 text-sm text-slate-600">
-
-                  <Clock size={14} />
-
-                  Average Latency
-
-                </span>
-
-                <span className="font-bold text-slate-900">
-
-                  {averageLatency}s
-
-                </span>
-
-              </div>
-
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
-
-                <span className="text-sm text-slate-600">
-
-                  Total API Latency
-
-                </span>
-
-                <span className="font-bold text-slate-900">
-
-                  {totalLatency.toFixed(2)}s
-
-                </span>
-
-              </div>
+              <Metric
+                label="Total API Latency"
+                value={`${totalLatency.toFixed(2)}s`}
+              />
 
             </div>
 
@@ -2457,44 +1726,29 @@ function PracticeMode() {
 
       </div>
 
-
-      {/* ================================================= */}
-      {/* FOOTER */}
-      {/* ================================================= */}
-
-      <footer className="border-t border-slate-200 bg-white">
-
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-2 px-6 py-6 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-8">
-
-          <p className="font-semibold text-slate-700">
-
-            Disaster Relief Resource Negotiation System
-
-          </p>
-
-
-          <p>
-
-            Powered by React · FastAPI · Gemini AI
-
-          </p>
-
-
-          <p>
-
-            © 2026
-
-          </p>
-
-        </div>
-
-      </footer>
-
     </div>
-
   );
-
 }
 
+function Metric({
+  label,
+  value,
+  icon,
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+
+      <span className="flex items-center gap-2 text-sm text-slate-600">
+        {icon}
+        {label}
+      </span>
+
+      <span className="font-bold text-slate-900">
+        {value}
+      </span>
+
+    </div>
+  );
+}
 
 export default PracticeMode;

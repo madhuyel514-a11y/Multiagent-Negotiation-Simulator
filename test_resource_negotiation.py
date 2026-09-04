@@ -15,7 +15,7 @@ import json
 import sys
 sys.path.insert(0, 'backend')
 
-from services.negotiation_orchestrator import NegotiationOrchestrator
+from services.negotiation_orchestrator import NegotiationOrchestrator  # type: ignore
 
 # Test scenario with USER-SPECIFIED resource quantities
 test_scenario = {
@@ -167,7 +167,7 @@ async def test_negotiation():
                     )
                     
                     if issues:
-                        print(f"      ❌ ISSUES:")
+                        print(f"      [X] ISSUES:")
                         for issue in issues:
                             print(f"         - {issue}")
                     else:
@@ -176,11 +176,11 @@ async def test_negotiation():
                         has_resources = any(res.lower() in msg.get('message', '').lower() for res in all_resources)
                         
                         if has_quantities and has_resources:
-                            print(f"      ✓ Uses specific resources and quantities")
+                            print(f"      [OK] Uses specific resources and quantities")
                         elif has_quantities:
-                            print(f"      ✓ Uses specific quantities")
+                            print(f"      [OK] Uses specific quantities")
                         elif has_resources:
-                            print(f"      ✓ References specific resources")
+                            print(f"      [OK] References specific resources")
                 
         except Exception as e:
             print(f"Error during turn: {e}")

@@ -6,7 +6,6 @@ Test script to verify resource quantities are used in AI negotiation
 import asyncio
 import json
 import sys
-sys.path.insert(0, 'backend')
 
 from services.negotiation_orchestrator import NegotiationOrchestrator
 
@@ -97,8 +96,8 @@ async def test_negotiation():
                 has_quantities = any(char.isdigit() for char in last_msg.get('message', ''))
                 has_resource_names = any(res.lower() in message_lower for res in state.get('resource_quantities', {}).keys())
                 
-                print(f"\n  ✓ Contains quantity numbers: {has_quantities}")
-                print(f"  ✓ Contains resource names: {has_resource_names}")
+                print(f"\n  [OK] Contains quantity numbers: {has_quantities}")
+                print(f"  [OK] Contains resource names: {has_resource_names}")
                 
         except Exception as e:
             print(f"Error during turn: {e}")
