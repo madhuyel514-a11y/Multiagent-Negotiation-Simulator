@@ -470,23 +470,23 @@ function PracticeMode() {
       }
 
       // Update round.
-      if (data?.round !== undefined && data?.round !== null) {
+      if (aiResponse?.round !== undefined && aiResponse?.round !== null) {
         setRound(
           Math.min(
-            Number(data.round),
+            Number(aiResponse.round),
             totalRounds
           )
         );
       }
 
       // Update negotiation status.
-      if (data?.consensus_reached === true) {
+      if (aiResponse?.consensus_reached === true) {
         setSessionStatus('Agreement reached');
         setStatus('Negotiation complete');
-      } else if (data?.max_rounds_reached === true) {
+      } else if (aiResponse?.max_rounds_reached === true) {
         setSessionStatus('Deadlock');
         setStatus('Negotiation ended');
-      } else if (data?.negotiation_ended === true) {
+      } else if (aiResponse?.negotiation_ended === true) {
         setSessionStatus('Negotiation ended');
         setStatus('Negotiation complete');
       } else {

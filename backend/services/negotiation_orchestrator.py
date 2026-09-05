@@ -264,6 +264,11 @@ class NegotiationOrchestrator:
         ).strip()
 
         normalized_action = str(action or "Offer").strip().upper()
+        normalized_action = {
+            "ACCEPT OFFER": "ACCEPT",
+            "REJECT OFFER": "REJECT",
+            "COUNTER OFFER": "COUNTER",
+        }.get(normalized_action, normalized_action)
         if normalized_action not in ("OFFER", "COUNTER", "ACCEPT", "REJECT"):
             normalized_action = "OFFER"
 
@@ -327,6 +332,10 @@ class NegotiationOrchestrator:
         elif normalized_action == "ACCEPT" and state.get("current_proposal"):
             state["accepted_proposals"]["Human Participant"] = dict(
                 state["current_proposal"]
+            )
+            print(
+                "[CONSENSUS] preserving acceptance: "
+                "Human Participant"
             )
 
         state["history"].append(
@@ -506,6 +515,27 @@ class NegotiationOrchestrator:
 
         return result
 
+    def _normalize_fallback_proposal(
+        self,
+        proposal,
+        current_proposal,
+    ):
+        """Keep fallback counters in the current proposal's nested shape."""
+        if (
+            not proposal
+            or not current_proposal
+            or not isinstance(proposal, dict)
+            or not isinstance(current_proposal, dict)
+            or not all(isinstance(value, dict) for value in current_proposal.values())
+            or not all(not isinstance(value, dict) for value in proposal.values())
+        ):
+            return proposal
+
+        return {
+            recipient: dict(resources)
+            for recipient, resources in current_proposal.items()
+        }
+
     # =========================================================
     # UNIQUE NEGOTIATION RESPONSE (FALLBACK)
     # =========================================================
@@ -680,18 +710,28 @@ class NegotiationOrchestrator:
                 None
             )
 
-        if (
-            state["current_round"]
-            > state["max_rounds"]
-        ):
-
+        if state["current_round"] >= state["max_rounds"]:
             state["max_rounds_reached"] = True
             state["negotiation_ended"] = True
-            state["consensus_reached"] = False
-            state["status"] = "deadlock_no_consensus"
-            state["final_allocation"] = None
+
+            if state.get("consensus_reached"):
+                state["consensus"] = 1.0
+                state["status"] = "agreement_reached"
+                state["final_allocation"] = dict(
+                    state.get("current_proposal", {})
+                )
+                print("[TERMINATION] reason=consensus/max_rounds")
+            else:
+                state["consensus_reached"] = False
+                state["status"] = "deadlock_no_consensus"
+                state["final_allocation"] = (
+                    dict(state.get("current_proposal", {}))
+                    if state.get("current_proposal")
+                    else None
+                )
+                print("[TERMINATION] reason=deadlock/max_rounds")
+
             state["final_report"] = self._build_final_report(state)
-            print("[TERMINATION] reason=deadlock/max_rounds")
 
             return self._build_response(
                 state,
@@ -797,11 +837,21 @@ class NegotiationOrchestrator:
         else:
             recipient_names = [item.name for item in agents]
 
-        parsed_proposal = self._parse_proposals_from_message(
-            message,
-            state.get("resource_quantities", {}),
-            recipient_names,
-        )
+        if (
+            incoming_proposal
+            and str(raw_action or "").strip().upper() == "ACCEPT"
+        ):
+            parsed_proposal = {}
+        else:
+            parsed_proposal = self._parse_proposals_from_message(
+                message,
+                state.get("resource_quantities", {}),
+                recipient_names,
+            )
+            parsed_proposal = self._normalize_fallback_proposal(
+                parsed_proposal,
+                incoming_proposal,
+            )
 
         llm_message = message
 
@@ -835,13 +885,52 @@ class NegotiationOrchestrator:
         if action in ("OFFER", "COUNTER") and generated_proposal:
             state["last_proposals"][agent.name] = generated_proposal
             print(f"Parsed proposal from {agent.name}: {generated_proposal}")
+            previous_proposal = dict(state.get("current_proposal", {}))
             state["current_proposal"] = dict(generated_proposal)
-            state["accepted_proposals"] = {}
+            practice_mode = (
+                "Human Participant" in state.get(
+                    "accepted_proposals", {}
+                )
+                or any(
+                    item.get("agent") == "Human Participant"
+                    for item in state.get("history", [])
+                )
+            )
+            if practice_mode:
+                preserved_acceptances = {}
+                for accepted_agent, accepted_proposal in state.get(
+                    "accepted_proposals", {}
+                ).items():
+                    if accepted_proposal == state["current_proposal"]:
+                        preserved_acceptances[accepted_agent] = (
+                            accepted_proposal
+                        )
+                        print(
+                            "[CONSENSUS] preserving acceptance: "
+                            f"{accepted_agent}"
+                        )
+                    else:
+                        print(
+                            "[CONSENSUS] invalidating acceptance: "
+                            f"{accepted_agent}"
+                        )
+                state["accepted_proposals"] = preserved_acceptances
+            else:
+                state["accepted_proposals"] = {}
+            if previous_proposal != state["current_proposal"]:
+                print(
+                    "[CONSENSUS] proposal changed; old acceptances "
+                    "were invalidated unless they matched the new proposal"
+                )
             print(f"[PROPOSAL] counter={generated_proposal}")
             print(f"[PROPOSAL] full_allocation={state['current_proposal']}")
         elif action == "ACCEPT" and state.get("current_proposal"):
             state["accepted_proposals"][agent.name] = dict(
                 state["current_proposal"]
+            )
+            print(
+                "[CONSENSUS] accepting current proposal: "
+                f"{agent.name}"
             )
 
             print(f"[PROPOSAL] counter={{}}")
@@ -885,12 +974,27 @@ class NegotiationOrchestrator:
         agent_names = [item.name for item in agents]
         accepted_proposals = state.get("accepted_proposals", {})
         current_proposal = state.get("current_proposal", {})
+        practice_mode = (
+            "Human Participant" in accepted_proposals
+            or any(
+                item.get("agent") == "Human Participant"
+                for item in state.get("history", [])
+            )
+        )
+        consensus_participants = (
+            [
+                "Human Participant",
+                *agent_names,
+            ]
+            if practice_mode
+            else agent_names
+        )
         unanimous_acceptance = (
             bool(current_proposal)
-            and len(accepted_proposals) == len(agent_names)
+            and len(accepted_proposals) == len(consensus_participants)
             and all(
                 accepted_proposals.get(name) == current_proposal
-                for name in agent_names
+                for name in consensus_participants
             )
         )
         print(f"[CONSENSUS] unanimous={unanimous_acceptance}")
@@ -1293,6 +1397,11 @@ class NegotiationOrchestrator:
                 "ongoing"
             ),
 
+            "status": state.get(
+                "status",
+                "ongoing"
+            ),
+
             # GAP 4: expose deadlock/resolution info to the frontend
             "deadlock_detected": state.get("deadlock_detected", False),
 
@@ -1318,9 +1427,29 @@ class NegotiationOrchestrator:
                 5
             ),
 
-            "agreed_agents": len(state.get("accepted_proposals", {})),
+            "agreed_agents": (
+                sum(
+                    accepted_proposal == state.get("current_proposal", {})
+                    for accepted_proposal in state.get(
+                        "accepted_proposals",
+                        {}
+                    ).values()
+                )
+                if any(
+                    item.get("agent") == "Human Participant"
+                    for item in state.get("history", [])
+                )
+                else len(state.get("accepted_proposals", {}))
+            ),
 
-            "total_agents": len(state.get("agents", [])),
+            "total_agents": len(state.get("agents", [])) + (
+                1
+                if any(
+                    item.get("agent") == "Human Participant"
+                    for item in state.get("history", [])
+                )
+                else 0
+            ),
 
             "gemini_metrics": get_gemini_metrics()
         }

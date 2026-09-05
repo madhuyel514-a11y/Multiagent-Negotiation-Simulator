@@ -6,6 +6,11 @@ import time
 from dotenv import load_dotenv
 from google import genai
 
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
 load_dotenv()
 
 import itertools
@@ -144,6 +149,35 @@ for key in keys:
 
 _client_cycle = itertools.cycle(_clients) if _clients else None
 
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+_GROQ_KEYS = [
+    key.strip().strip("\"'")
+    for key in (
+        os.getenv("GROQ_API_KEY_1", ""),
+        os.getenv("GROQ_API_KEY_2", ""),
+    )
+    if key.strip().strip("\"'").lower() not in {
+        "",
+        "your_api_key",
+        "your-key",
+        "changeme",
+        "replace_me",
+        "none",
+        "null",
+    }
+]
+_groq_clients = []
+
+if Groq is not None:
+    for key in _GROQ_KEYS:
+        try:
+            _groq_clients.append(Groq(api_key=key))
+        except Exception as exc:
+            print(
+                f"[GROQ] client initialization failed: "
+                f"{type(exc).__name__}"
+            )
+
 def get_client():
     return next(_client_cycle) if _client_cycle else None
 
@@ -171,6 +205,32 @@ def _failure_category(error):
     if "403" in text or "PERMISSION_DENIED" in text:
         return "403 PERMISSION_DENIED"
     return type(error).__name__
+
+
+def _record_successful_groq_metrics(
+    agent_name,
+    current_round,
+    model_name,
+    latency_seconds,
+    usage,
+):
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    total_tokens = int(
+        getattr(usage, "total_tokens", 0) or input_tokens + output_tokens
+    )
+
+    _GEMINI_METRICS["total_requests"] += 1
+    _GEMINI_METRICS["total_input_tokens"] += input_tokens
+    _GEMINI_METRICS["total_output_tokens"] += output_tokens
+    _GEMINI_METRICS["total_tokens"] += total_tokens
+    _GEMINI_METRICS["total_latency"] += latency_seconds
+
+    print(
+        f"[GROQ_METRICS] agent={_friendly_agent_name(agent_name, fallback_agent='')} "
+        f"round={current_round} model={model_name} latency={latency_seconds:.2f}s "
+        f"input_tokens={input_tokens} output_tokens={output_tokens} total_tokens={total_tokens}"
+    )
 
 
 # =========================================================
@@ -511,6 +571,60 @@ def _validation_failure_reason(message, allowed_resources, resource_quantities):
     return "schema validation failure: missing or zero allocation"
 
 
+def _process_provider_response(
+    text,
+    allowed_resources,
+    resource_quantities,
+    scenario,
+):
+    result = _extract_json(text)
+    if not result or not isinstance(result, dict):
+        return None, "invalid JSON"
+
+    action = str(result.get("action", "COUNTER")).strip().upper()
+    if action not in {"OFFER", "REJECT", "COUNTER", "ACCEPT"}:
+        return None, f"invalid action: {action}"
+
+    message = str(result.get("message", "")).strip()
+    reasoning = str(result.get("reasoning", "")).strip()
+    stance = str(result.get("stance", "moderate")).strip()
+
+    if action == "ACCEPT":
+        return {
+            "action": action,
+            "message": message,
+            "reasoning": reasoning,
+            "stance": stance,
+        }, None
+
+    if not message:
+        return None, "schema validation failure: missing message"
+
+    recipient_names = [
+        recipient.get("name")
+        for recipient in (scenario or {}).get("recipients", [])
+        if recipient.get("name")
+    ]
+    if not _validate_response_resources(
+        message,
+        allowed_resources,
+        resource_quantities,
+        recipient_names,
+    ):
+        return None, _validation_failure_reason(
+            message,
+            allowed_resources,
+            resource_quantities,
+        )
+
+    return {
+        "action": action,
+        "message": message,
+        "reasoning": reasoning,
+        "stance": stance,
+    }, None
+
+
 # =========================================================
 # ROLE-SPECIFIC FALLBACK WITH REALISTIC CONFLICT POSITIONS
 # =========================================================
@@ -838,6 +952,58 @@ Return ONLY valid JSON:
 """
 
     # -----------------------------------------------------
+    # Try Groq first
+    # -----------------------------------------------------
+
+    if _groq_clients:
+        for client_index, client in enumerate(_groq_clients, 1):
+            print("[GROQ] attempting request")
+            start_time = time.perf_counter()
+
+            try:
+                response = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": instruction,
+                        }
+                    ],
+                    response_format={"type": "json_object"},
+                )
+                latency_seconds = time.perf_counter() - start_time
+                text = (
+                    response.choices[0].message.content
+                    if response.choices
+                    else ""
+                ) or ""
+                result, failure = _process_provider_response(
+                    text,
+                    allowed_resources,
+                    resource_quantities,
+                    scenario,
+                )
+
+                if result:
+                    _record_successful_groq_metrics(
+                        agent_name=agent_name or current_agent,
+                        current_round=current_round,
+                        model_name=GROQ_MODEL,
+                        latency_seconds=latency_seconds,
+                        usage=getattr(response, "usage", None),
+                    )
+                    print("[GROQ] success")
+                    return result
+
+                print(f"[GROQ] failed: {failure}")
+            except Exception as exc:
+                print(f"[GROQ] failed: {_failure_category(exc)}")
+    else:
+        print("[GROQ] failed: no configured client")
+
+    print("[GEMINI] fallback request")
+
+    # -----------------------------------------------------
     # Try Gemini
     # -----------------------------------------------------
 
@@ -874,95 +1040,26 @@ Return ONLY valid JSON:
                     last_failure = "empty response"
                     print(f"[GEMINI] key {client_index} failed: {last_failure}")
                     break
-                result = _extract_json(text)
+                result, failure = _process_provider_response(
+                    text,
+                    allowed_resources,
+                    resource_quantities,
+                    scenario,
+                )
 
                 if result:
-                    print("[GEMINI] parsing=success")
-
-                    message = str(
-                        result.get("message", "")
-                    ).strip()
-
-                    reasoning = str(
-                        result.get("reasoning", "")
-                    ).strip()
-
-                    stance = str(
-                        result.get(
-                            "stance",
-                            "moderate"
-                        )
-                    ).strip()
-
-                    action = str(
-                        result.get(
-                            "action",
-                            "COUNTER"
-                        )
-                    ).strip().upper()
-                    print(f"[GEMINI] parsed_action={action}")
-
-                    if message:
-                        print(f"[GEMINI] extracted_message={message}")
-                        entries = re.findall(
-                        r"([A-Za-z][A-Za-z0-9\s&/-]*)\s*:\s*(\d+)\s*(?:units?|qty\.?|quantity)?",
-                        message,
-                        re.IGNORECASE,
+                    print("[GEMINI] success")
+                    _record_successful_gemini_metrics(
+                        agent_name=agent_name or current_agent,
+                        current_round=current_round,
+                        model_name=model_name,
+                        latency_seconds=latency_seconds,
+                        usage_metadata=usage_metadata,
                     )
-                        recipient_names = [
-                            recipient.get("name")
-                            for recipient in (scenario or {}).get("recipients", [])
-                            if recipient.get("name")
-                        ]
-                        extracted_proposal = _extract_recipient_allocations(
-                            message,
-                            recipient_names,
-                            resource_quantities,
-                        )
-                        if not extracted_proposal:
-                            extracted_proposal = {
-                                name.strip(): int(quantity)
-                                for name, quantity in entries
-                            }
-                        print(
-                            "[GEMINI] extracted_proposal="
-                            + str(extracted_proposal)
-                        )
-                        is_valid = _validate_response_resources(
-                            message,
-                            allowed_resources,
-                            resource_quantities,
-                            recipient_names,
-                        )
+                    return result
 
-                        if is_valid:
-                            print(f"[GEMINI] key {client_index} succeeded")
-                            print(f"[GEMINI] extracted_proposal=validated_from_message")
-                            _record_successful_gemini_metrics(
-                                agent_name=agent_name or current_agent,
-                                current_round=current_round,
-                                model_name=model_name,
-                                latency_seconds=latency_seconds,
-                                usage_metadata=usage_metadata,
-                            )
-                            return {
-                                "action": action,
-                                "message": message,
-                                "reasoning": reasoning,
-                                "stance": stance
-                            }
-                        last_failure = _validation_failure_reason(
-                            message,
-                            allowed_resources,
-                            resource_quantities,
-                        )
-                        print(f"[GEMINI] key {client_index} failed: {last_failure}")
-                    else:
-                        last_failure = "schema validation failure: missing message"
-                        print(f"[GEMINI] key {client_index} failed: {last_failure}")
-                else:
-                    last_failure = "invalid JSON"
-                    print(f"[GEMINI] key {client_index} failed: {last_failure}")
+                last_failure = failure
+                print(f"[GEMINI] key {client_index} failed: {last_failure}")
 
             except Exception as exc:
 
