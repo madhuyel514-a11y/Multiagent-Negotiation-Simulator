@@ -198,8 +198,8 @@ def reset_negotiation(body: StartRequest):
 @app.post("/api/practice/start")
 def practice_start(body: StartRequest):
     """
-    Initializes Practice Mode where all 3 AI agents (Government, NGO, District)
-    negotiate first in Round 1, setting the stage for the human participant.
+    Initializes Practice Mode where Human makes the initial proposal in Round 1,
+    setting the stage for the AI agency heads (Government, NGO, District) to respond.
     """
     try:
         session_id = orchestrator.create_session(
@@ -209,19 +209,19 @@ def practice_start(body: StartRequest):
         )
         orchestrator.sessions[session_id]["is_practice"] = True
         orchestrator.sessions[session_id]["state"]["practice_mode"] = True
+        orchestrator.sessions[session_id]["state"]["awaiting_final_decision"] = False
 
-        # Round 1: All 3 AI agents deliberate first!
-        ai_responses = orchestrator.step_practice_round(session_id)
         current_state = orchestrator.get_state(session_id)
 
         return {
             "success": True,
             "session_id": session_id,
-            "ai_responses": ai_responses,
+            "ai_responses": [],
             "state": current_state,
-            "round": current_state.get("current_round", 1),
-            "consensus": current_state.get("consensus", 0.0),
+            "round": 1,
+            "consensus": 0.0,
             "status": "Your turn",
+            "awaiting_final_decision": False,
         }
 
     except Exception as error:
@@ -232,7 +232,7 @@ def practice_start(body: StartRequest):
 
 
 # =========================================================
-# PRACTICE MODE: TURN (HUMAN SUBMITS OPINION -> AI AGENTS RESPOND)
+# PRACTICE MODE: TURN (HUMAN SUBMITS PROPOSAL/COUNTER -> AI AGENTS RESPOND)
 # =========================================================
 
 @app.post("/api/practice/turn")
@@ -250,7 +250,7 @@ def practice_turn(body: PracticeTurnRequest):
         orchestrator.sessions[session_id]["is_practice"] = True
         orchestrator.sessions[session_id]["state"]["practice_mode"] = True
 
-        # 1. Add the human participant's message (completes current round)
+        # 1. Add human's proposal / counter / accept / reject for current round
         human_result = orchestrator.add_human_message(
             session_id=session_id,
             message=body.message,
@@ -263,13 +263,13 @@ def practice_turn(body: PracticeTurnRequest):
         if not human_result.get("success"):
             return human_result
 
-        state_after_human = orchestrator.get_state(session_id)
+        state = orchestrator.get_state(session_id)
 
-        # 2. If human acceptance closed agreement or max rounds reached, finish
-        if state_after_human.get("negotiation_ended"):
+        # 2. If human acceptance closed unanimous agreement early
+        if state.get("negotiation_ended"):
             ai_responses = []
         else:
-            # 3. Next round: All 3 AI agents deliberate in response to human's move
+            # 3. Government -> NGO -> District deliberate and respond to human's proposal
             ai_responses = orchestrator.step_practice_round(session_id)
 
         current_state = orchestrator.get_state(session_id)
@@ -285,9 +285,51 @@ def practice_turn(body: PracticeTurnRequest):
             "round": current_state.get("current_round", 1),
             "consensus": current_state.get("consensus", 0.0),
             "negotiation_ended": current_state.get("negotiation_ended", False),
-            "status": "Negotiation complete" if current_state.get("negotiation_ended") else "Your turn",
+            "awaiting_final_decision": current_state.get("awaiting_final_decision", False),
+            "status": current_state.get("status", "Your turn"),
+            "final_allocation": current_state.get("final_allocation"),
+            "final_report": current_state.get("final_report"),
         }
 
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+class PracticeDecisionRequest(BaseModel):
+    session_id: str
+    decision: str  # "accept" | "reject" | "reset"
+
+
+@app.post("/api/practice/decision")
+def practice_decision(body: PracticeDecisionRequest):
+    session_id = body.session_id
+
+    if not orchestrator.session_exists(session_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found",
+        )
+
+    try:
+        updated_state = orchestrator.handle_final_decision(
+            session_id=session_id,
+            decision=body.decision
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "state": updated_state,
+            "decision": body.decision,
+            "status": updated_state.get("status"),
+            "consensus": updated_state.get("consensus", 0.0),
+            "negotiation_ended": updated_state.get("negotiation_ended", False),
+            "final_allocation": updated_state.get("final_allocation"),
+            "final_report": updated_state.get("final_report"),
+            "awaiting_final_decision": False,
+        }
     except Exception as error:
         raise HTTPException(
             status_code=500,

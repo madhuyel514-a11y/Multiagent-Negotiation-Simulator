@@ -7,6 +7,14 @@ import {
   ArrowLeftRight,
   RotateCcw,
   Sparkles,
+  CheckCircle,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  BarChart3,
+  Users,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 import { scenarios } from '../data/scenarios';
@@ -139,6 +147,81 @@ function getProposalChanges(current, previous) {
       change: (currentPaths[path] ?? 0) - (previousPaths[path] ?? 0),
     }))
     .filter((item) => item.change !== 0);
+}
+
+function isNestedAllocation(allocation) {
+  return (
+    allocation &&
+    typeof allocation === 'object' &&
+    Object.values(allocation).some((v) => v && typeof v === 'object' && !Array.isArray(v))
+  );
+}
+
+function computeAllocationDifference(initialProposal, finalProposal) {
+  if (!initialProposal || !finalProposal) return [];
+  const changes = [];
+  const isNested = isNestedAllocation(initialProposal) || isNestedAllocation(finalProposal);
+
+  if (isNested) {
+    const sectors = Array.from(
+      new Set([...Object.keys(initialProposal || {}), ...Object.keys(finalProposal || {})])
+    );
+    for (const sector of sectors) {
+      const initSec = (initialProposal && initialProposal[sector]) || {};
+      const finalSec = (finalProposal && finalProposal[sector]) || {};
+      const resources = Array.from(
+        new Set([...Object.keys(initSec), ...Object.keys(finalSec)])
+      );
+      for (const res of resources) {
+        const initVal = Number(initSec[res] ?? 0);
+        const finalVal = Number(finalSec[res] ?? 0);
+        const diff = finalVal - initVal;
+        const pct = initVal > 0
+          ? ((diff / initVal) * 100).toFixed(1)
+          : (finalVal > 0 ? '+100.0' : '0.0');
+        changes.push({
+          sector,
+          resource: res,
+          initial: initVal,
+          final: finalVal,
+          diff,
+          pct: diff > 0 ? `+${pct}%` : `${pct}%`,
+        });
+      }
+    }
+  } else {
+    const resources = Array.from(
+      new Set([...Object.keys(initialProposal || {}), ...Object.keys(finalProposal || {})])
+    );
+    for (const res of resources) {
+      const initVal = Number(initialProposal[res] ?? 0);
+      const finalVal = Number(finalProposal[res] ?? 0);
+      const diff = finalVal - initVal;
+      const pct = initVal > 0
+        ? ((diff / initVal) * 100).toFixed(1)
+        : (finalVal > 0 ? '+100.0' : '0.0');
+      changes.push({
+        sector: 'Overall Allocation',
+        resource: res,
+        initial: initVal,
+        final: finalVal,
+        diff,
+        pct: diff > 0 ? `+${pct}%` : `${pct}%`,
+      });
+    }
+  }
+  return changes;
+}
+
+function displayValue(value) {
+  return value === null || value === undefined || value === ''
+    ? 'Not available'
+    : String(value);
+}
+
+function displayBoolean(value) {
+  if (value === null || value === undefined) return 'Not available';
+  return value ? 'Yes' : 'No';
 }
 
 function PracticeAllocationBreakdown({ proposal, style }) {
@@ -422,13 +505,19 @@ function PracticeMode() {
     return [];
   };
 
-  const getInitialAiMessage = (scenario) => {
-    const scenarioName = scenario?.title || scenario?.name || 'this scenario';
-    const objective = scenario?.objective;
-
-    return objective
-      ? `We need to coordinate ${scenarioName.toLowerCase()}: ${objective}`
-      : `We need to coordinate resources for ${scenarioName}.`;
+  const buildDefaultProposal = (scenario) => {
+    if (!scenario || typeof scenario !== 'object') return {};
+    const recipients = scenario.recipients || [];
+    const resources = getResources(scenario);
+    const proposal = {};
+    for (const item of recipients) {
+      const rName = typeof item === 'object' ? (item.name || item.id || 'Region') : String(item);
+      proposal[rName] = {};
+      for (const res of resources) {
+        proposal[rName][res] = 0;
+      }
+    }
+    return proposal;
   };
 
   // --------------------------------------------------
@@ -454,14 +543,13 @@ function PracticeMode() {
 
   const [message, setMessage] = useState('');
 
-  const [currentProposal, setCurrentProposal] = useState({});
+  const [currentProposal, setCurrentProposal] = useState(() => buildDefaultProposal(initialScenario));
 
-  const [messages, setMessages] = useState([
-    {
-      sender: 'AI Agent',
-      text: getInitialAiMessage(initialScenario),
-    },
-  ]);
+  const [messages, setMessages] = useState([]);
+  const [finalAllocation, setFinalAllocation] = useState(null);
+  const [finalReport, setFinalReport] = useState(null);
+  const [selectedDiffSource, setSelectedDiffSource] = useState('opening');
+  const [showAdvancedOutcome, setShowAdvancedOutcome] = useState(false);
 
   const [round, setRound] = useState(1);
 
@@ -470,7 +558,8 @@ function PracticeMode() {
   const [sessionStatus, setSessionStatus] =
     useState('Active');
 
-  const [consensus, setConsensus] = useState(0.25);
+  const [consensus, setConsensus] = useState(0.0);
+  const [awaitingFinalDecision, setAwaitingFinalDecision] = useState(false);
 
   const [sessionId, setSessionId] =
     useState(null);
@@ -507,8 +596,9 @@ function PracticeMode() {
       }
 
       setLoading(true);
-      setStatus('AI agents are deliberating Round 1...');
+      setStatus('Starting practice session...');
       setSessionStatus('Active');
+      setAwaitingFinalDecision(false);
 
       const configuredAgents =
         (savedConfig && Array.isArray(savedConfig.agents) && savedConfig.agents.length > 0)
@@ -557,7 +647,10 @@ function PracticeMode() {
       }
 
       setSessionId(data.session_id);
-      setCurrentProposal(data?.state?.current_proposal || {});
+      const startProp = (data?.state?.current_proposal && Object.keys(data.state.current_proposal).length > 0)
+        ? data.state.current_proposal
+        : buildDefaultProposal(configuredScenario);
+      setCurrentProposal(startProp);
       setLlmMetrics(
         data?.state?.gemini_metrics || INITIAL_LLM_METRICS
       );
@@ -565,31 +658,12 @@ function PracticeMode() {
       setRound(1);
       setStatus('Your turn');
       setSessionStatus('Active');
+      setAwaitingFinalDecision(false);
+      setAction('Offer');
+      setFinalAllocation(null);
+      setFinalReport(null);
 
-      const briefing = {
-        sender: 'AI Agent',
-        text: getInitialAiMessage(configuredScenario),
-      };
-
-      const aiMessages = (data?.ai_responses || []).map((aiResp) => {
-        const history = aiResp?.history || [];
-        const agentName = aiResp?.agent;
-        const matchingTurn = history.length
-          ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
-          : null;
-
-        return {
-          sender: agentName || 'AI Agent',
-          text: aiResp.message,
-          action: matchingTurn?.action || aiResp?.action || 'OFFER',
-          stance: matchingTurn?.stance || aiResp?.stance || 'collaborative',
-          round: 1,
-          proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
-          reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
-        };
-      });
-
-      setMessages([briefing, ...aiMessages]);
+      setMessages([]);
     } catch (error) {
       console.error(
         'Start session error:',
@@ -698,12 +772,7 @@ function PracticeMode() {
 
     setStatus('Starting practice...');
 
-    setMessages([
-      {
-        sender: 'AI Agent',
-        text: getInitialAiMessage(scenario),
-      },
-    ]);
+    setMessages([]);
 
     await startSession(scenario);
   };
@@ -728,9 +797,11 @@ function PracticeMode() {
       return;
     }
 
+    const currentTurnRound = round;
+
     try {
       setLoading(true);
-      setStatus('AI Agent is responding...');
+      setStatus('AI agency heads (Government, NGO, District) are deliberating...');
 
       const response = await fetch(
         `${API_URL}/api/practice/turn`,
@@ -790,7 +861,7 @@ function PracticeMode() {
             text: aiResp.message,
             action: matchingTurn?.action || aiResp?.action || 'COUNTER',
             stance: matchingTurn?.stance || aiResp?.stance || 'firm',
-            round: Number(data?.round || matchingTurn?.round || round + 1),
+            round: currentTurnRound,
             proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
             reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
           });
@@ -811,12 +882,6 @@ function PracticeMode() {
 
       const stateObj = data?.state;
 
-      // Update round
-      const nextRound = data?.round ?? stateObj?.current_round;
-      if (nextRound !== undefined && nextRound !== null) {
-        setRound(Math.min(Number(nextRound), totalRounds));
-      }
-
       // Update consensus meter
       const consensusVal = data?.consensus ?? stateObj?.consensus;
       if (consensusVal !== undefined && consensusVal !== null) {
@@ -825,21 +890,37 @@ function PracticeMode() {
 
       // Update negotiation status
       const isConsensus = data?.consensus_reached || stateObj?.consensus_reached;
-      const isMaxRounds = data?.max_rounds_reached || stateObj?.max_rounds_reached;
       const isEnded = data?.negotiation_ended || stateObj?.negotiation_ended;
+      const isAwaitingFinal = data?.awaiting_final_decision || stateObj?.awaiting_final_decision;
+
+      if (data?.final_report || stateObj?.final_report) {
+        setFinalReport(data?.final_report || stateObj?.final_report);
+      }
+      if (data?.final_allocation || stateObj?.final_allocation) {
+        setFinalAllocation(data?.final_allocation || stateObj?.final_allocation);
+      }
 
       if (isConsensus) {
         setSessionStatus('Agreement reached');
         setStatus('Negotiation complete');
-      } else if (isMaxRounds) {
-        setSessionStatus('Deadlock');
-        setStatus('Negotiation ended');
+        setAwaitingFinalDecision(false);
       } else if (isEnded) {
         setSessionStatus('Negotiation ended');
         setStatus('Negotiation complete');
+        setAwaitingFinalDecision(false);
+      } else if (isAwaitingFinal) {
+        setAwaitingFinalDecision(true);
+        setStatus('Final Decision');
+        setSessionStatus('Deliberation Complete');
       } else {
+        setAwaitingFinalDecision(false);
+        const nextRound = data?.round ?? stateObj?.current_round;
+        if (nextRound !== undefined && nextRound !== null) {
+          setRound(Math.min(Number(nextRound), totalRounds));
+        }
         setSessionStatus('Active');
         setStatus('Your turn');
+        setAction('Counter');
       }
     } catch (error) {
       console.error(
@@ -862,13 +943,86 @@ function PracticeMode() {
     }
   };
 
+  // --------------------------------------------------
+  // FINAL EXECUTIVE DECISION ACTION
+  // --------------------------------------------------
+
+  const handleFinalDecisionAction = async (decisionType) => {
+    if (decisionType === 'reset') {
+      await handleNewNegotiation();
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/api/practice/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          decision: decisionType,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to record final decision');
+      }
+
+      const data = await response.json();
+      setAwaitingFinalDecision(false);
+
+      if (data?.final_report || data?.state?.final_report) {
+        setFinalReport(data?.final_report || data?.state?.final_report);
+      }
+      if (data?.final_allocation || data?.state?.final_allocation) {
+        setFinalAllocation(data?.final_allocation || data?.state?.final_allocation);
+      }
+
+      if (decisionType === 'accept') {
+        setSessionStatus('Agreement reached');
+        setStatus('Negotiation complete');
+        setConsensus(1.0);
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: 'You',
+            text: 'I accept this consensus agreement and officially authorize final resource deployment.',
+            action: 'ACCEPT',
+            stance: 'accept',
+            round: totalRounds,
+            proposal: data?.final_allocation || currentProposal,
+          },
+        ]);
+      } else {
+        setSessionStatus('Deadlock');
+        setStatus('Negotiation ended');
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: 'You',
+            text: 'I reject the proposed terms. The roundtable has concluded without reaching an agreement.',
+            action: 'REJECT',
+            stance: 'reject',
+            round: totalRounds,
+            proposal: currentProposal,
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error('Final decision error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --------------------------------------------------
   // SEND BUTTON
   // --------------------------------------------------
 
   const handleSend = async () => {
     if (
       loading ||
-      status !== 'Your turn'
+      (status !== 'Your turn' && !awaitingFinalDecision)
     ) {
       return;
     }
@@ -876,14 +1030,13 @@ function PracticeMode() {
     let finalMessage =
       message.trim();
 
-    // User DOES NOT need to type anything.
-    // Resource + amount is enough.
-
     if (!finalMessage) {
-      if (action === 'Accept Offer') {
+      if (action === 'Accept Offer' || action === 'Accept') {
         finalMessage = 'I accept the proposed resource allocation across all sectors.';
       } else if (currentProposal && Object.keys(currentProposal).length > 0) {
-        finalMessage = `I submit this ${action.toLowerCase()} resource distribution across all sectors.`;
+        finalMessage = round === 1
+          ? 'I submit this initial master allocation proposal across all sectors.'
+          : `I submit this ${action.toLowerCase()} resource distribution across all sectors.`;
       } else if (amount && Number(amount) > 0) {
         finalMessage = `${action} ${amount} units of ${resource}.`;
       } else {
@@ -891,7 +1044,7 @@ function PracticeMode() {
       }
     }
 
-    // Show human message immediately with proposal table
+    // Show human message immediately with proposal table for this round
     setMessages((previous) => [
       ...previous,
       {
@@ -899,6 +1052,7 @@ function PracticeMode() {
         text: finalMessage,
         round,
         action,
+        stance: 'collaborative',
         proposal: currentProposal && Object.keys(currentProposal).length > 0 ? JSON.parse(JSON.stringify(currentProposal)) : undefined,
       },
     ]);
@@ -914,7 +1068,7 @@ function PracticeMode() {
   };
 
   // --------------------------------------------------
-  // ACCEPT / REJECT / COUNTER
+  // ACCEPT / REJECT / COUNTER QUICK ACTIONS
   // --------------------------------------------------
 
   const handleDecision = async (
@@ -927,11 +1081,12 @@ function PracticeMode() {
       return;
     }
 
+    setAction(decision);
     setSuggestionReasoning(null);
 
-    const decisionText = decision === 'Accept Offer'
+    const decisionText = decision === 'Accept Offer' || decision === 'Accept'
       ? 'I agree with the current resource allocation and support finalizing the agreement.'
-      : decision === 'Reject Offer'
+      : decision === 'Reject Offer' || decision === 'Reject'
         ? 'I cannot accept this allocation without further adjustments to affected region priorities.'
         : 'I counter with the updated resource allocation numbers.';
 
@@ -942,6 +1097,7 @@ function PracticeMode() {
         text: decisionText,
         round,
         action: decision,
+        stance: decision === 'Accept Offer' || decision === 'Accept' ? 'accept' : decision === 'Reject Offer' || decision === 'Reject' ? 'reject' : 'collaborative',
         proposal: currentProposal && Object.keys(currentProposal).length > 0 ? JSON.parse(JSON.stringify(currentProposal)) : undefined,
       },
     ]);
@@ -950,6 +1106,9 @@ function PracticeMode() {
       decisionText,
       decision
     );
+
+    setMessage('');
+    setAmount('');
   };
 
   // --------------------------------------------------
@@ -1052,12 +1211,10 @@ function PracticeMode() {
   // --------------------------------------------------
 
   const handleNewNegotiation = async () => {
-    setMessages([
-      {
-        sender: 'AI Agent',
-        text: getInitialAiMessage(selectedScenario),
-      },
-    ]);
+    setMessages([]);
+    setFinalAllocation(null);
+    setFinalReport(null);
+    setSelectedDiffSource('opening');
 
     setRound(1);
 
@@ -1072,7 +1229,7 @@ function PracticeMode() {
     setAmount('');
 
     setAction('Offer');
-    setCurrentProposal({});
+    setCurrentProposal(buildDefaultProposal(selectedScenario));
     setSuggestionReasoning(null);
 
     await startSession(
@@ -1092,13 +1249,18 @@ function PracticeMode() {
     resourceName,
     value
   ) => {
-    setCurrentProposal((previous) => ({
-      ...previous,
-      [district]: {
-        ...previous[district],
-        [resourceName]: value === '' ? '' : Number(value),
-      },
-    }));
+    setCurrentProposal((previous) => {
+      const base = (previous && Object.keys(previous).length > 0)
+        ? previous
+        : buildDefaultProposal(selectedScenario);
+      return {
+        ...base,
+        [district]: {
+          ...(base[district] || {}),
+          [resourceName]: value === '' ? '' : Number(value),
+        },
+      };
+    });
   };
 
   const scenarioResourceQuantities =
@@ -1406,6 +1568,12 @@ function PracticeMode() {
               )}
 
               <div className="space-y-6">
+                {messages.length === 0 && !loading && (
+                  <div className="py-8 text-center text-sm text-slate-400">
+                    Submit your opening offer below to begin Round 1 negotiation.
+                  </div>
+                )}
+
                 {Object.entries(groupedMessages).map(([roundNum, roundItems]) => (
                   <section key={roundNum} className="space-y-4">
                     <div className="flex items-center gap-3 pt-2">
@@ -1449,7 +1617,7 @@ function PracticeMode() {
           <div className="border-t border-slate-200 p-6 space-y-6">
 
             {/* YOUR TURN BANNER */}
-            {status === 'Your turn' && (
+            {status === 'Your turn' && !awaitingFinalDecision && (
               <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/95 via-blue-50/90 to-purple-50/95 p-5 shadow-xs">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2.5">
@@ -1458,7 +1626,7 @@ function PracticeMode() {
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
                     </span>
                     <span className="text-sm font-extrabold uppercase tracking-wider text-blue-950">
-                      YOUR TURN — ROUND {round}
+                      {round === 1 ? 'ROUND 1 — INITIAL MASTER PROPOSAL' : `YOUR TURN — ROUND ${round} DECISION`}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1471,8 +1639,102 @@ function PracticeMode() {
                   </div>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-slate-700">
-                  All 3 agency heads (<strong>🔵 Government</strong>, <strong>🟢 NGO</strong>, and <strong>🟠 District Administration</strong>) have spoken and presented their positions above. Review their debate, configure your resource allocation numbers in the table below, and submit your proposal or counter-move to the group.
+                  {round === 1 ? (
+                    <>You make the <strong>initial proposal</strong> for the negotiation. Allocate all resources across regions in the matrix below and submit. Government, NGO, and District Administration will each evaluate and respond in order.</>
+                  ) : (
+                    <>All 3 AI agency heads (<strong>🔵 Government</strong>, <strong>🟢 NGO</strong>, and <strong>🟠 District Administration</strong>) have responded to your previous proposal. Review their debate above, adjust allocations, and choose to <strong>Counter</strong>, <strong>Accept</strong>, or <strong>Reject</strong>.</>
+                  )}
                 </p>
+
+                <div className="mt-3.5 pt-3.5 border-t border-indigo-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="text-xs text-slate-600">
+                    <span className="font-bold text-indigo-900">💡 AI Assistant:</span> Unsure how to distribute? Click to auto-generate a balanced strategic allocation tailored to regional crisis severities.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGetSuggestion}
+                    disabled={loading || suggesting || status !== 'Your turn' || !sessionId}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-700 px-4 py-2 text-xs font-bold text-white shadow-md transition hover:from-indigo-700 hover:to-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Sparkles size={15} className={suggesting ? 'animate-spin' : ''} />
+                    {suggesting ? 'Drafting Proposal...' : '✨ Autofill AI Suggestion'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* FINAL EXECUTIVE DECISION PANEL */}
+            {awaitingFinalDecision && (
+              <div className="rounded-2xl border-2 border-indigo-400 bg-gradient-to-br from-indigo-50/95 via-white to-blue-50/90 p-6 shadow-lg space-y-5 animate-fadeIn">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-indigo-100 pb-4">
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-3.5 w-3.5 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-indigo-600"></span>
+                      </span>
+                      <h3 className="text-base font-extrabold uppercase tracking-wide text-indigo-950">
+                        Final Executive Decision Required (Round {totalRounds} of {totalRounds} Completed)
+                      </h3>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">
+                      All {totalRounds} rounds of negotiation have concluded. Government, NGO, and District Administration have presented their final evaluations. As lead coordinator, select the final outcome:
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-indigo-100 border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-800 uppercase tracking-wider">
+                    Executive Decision
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* ACCEPT */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinalDecisionAction('accept')}
+                    disabled={loading}
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 hover:border-emerald-500 transition shadow-xs text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 text-emerald-800 font-extrabold text-sm group-hover:text-emerald-900">
+                      <span className="p-1 rounded-md bg-emerald-200 text-emerald-900"><Check size={16} /></span>
+                      Accept Agreement
+                    </div>
+                    <p className="text-xs text-emerald-700 leading-relaxed">
+                      Ratify the resource allocation and conclude the negotiation with official multi-agency agreement.
+                    </p>
+                  </button>
+
+                  {/* REJECT */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinalDecisionAction('reject')}
+                    disabled={loading}
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-rose-300 bg-rose-50/80 hover:bg-rose-100 hover:border-rose-500 transition shadow-xs text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 text-rose-800 font-extrabold text-sm group-hover:text-rose-900">
+                      <span className="p-1 rounded-md bg-rose-200 text-rose-900"><X size={16} /></span>
+                      Reject & Walk Away
+                    </div>
+                    <p className="text-xs text-rose-700 leading-relaxed">
+                      Reject the final allocation and record a negotiation breakdown / deadlock.
+                    </p>
+                  </button>
+
+                  {/* RESET */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinalDecisionAction('reset')}
+                    disabled={loading}
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-slate-300 bg-slate-50/90 hover:bg-slate-100 hover:border-slate-500 transition shadow-xs text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 text-slate-800 font-extrabold text-sm group-hover:text-slate-900">
+                      <span className="p-1 rounded-md bg-slate-200 text-slate-900"><RotateCcw size={16} /></span>
+                      Reset Negotiation
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Reset round counter and start a fresh practice negotiation from Round 1.
+                    </p>
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1544,163 +1806,165 @@ function PracticeMode() {
             )}
 
             {/* INTERACTIVE ALLOCATION MATRIX (THE CORE USER PROPOSAL TABLE) */}
-            {Object.keys(currentProposal).length > 0 && (
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3">
-                  <div>
+            {status === 'Your turn' && !awaitingFinalDecision && (() => {
+              const activeProposal = (currentProposal && Object.keys(currentProposal).length > 0)
+                ? currentProposal
+                : buildDefaultProposal(selectedScenario);
+              const columnTotals = getProposalColumnTotals(activeProposal);
+
+              return (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 rounded-full bg-blue-600" />
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">
+                          Your Proposed Allocation
+                        </h3>
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Enter the exact resource distribution you propose across all affected regions.
+                      </p>
+                    </div>
+
                     <div className="flex items-center gap-2">
-                      <span className="flex h-2.5 w-2.5 rounded-full bg-blue-600" />
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">
-                        Your Proposed Allocation
-                      </h3>
+                      <button
+                        type="button"
+                        onClick={handleGetSuggestion}
+                        disabled={loading || suggesting || status !== 'Your turn' || !sessionId}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:border-indigo-300 hover:from-indigo-100 hover:to-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Get AI suggested next move and proposal based on regional priorities"
+                      >
+                        <Sparkles size={14} className={suggesting ? 'animate-spin text-indigo-600' : 'text-indigo-600'} />
+                        {suggesting ? 'Drafting...' : '✨ Autofill AI Suggestion'}
+                      </button>
                     </div>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      Enter the exact resource distribution you propose across all affected regions.
-                    </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleGetSuggestion}
-                      disabled={loading || suggesting || status !== 'Your turn' || !sessionId}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:border-indigo-300 hover:from-indigo-100 hover:to-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      title="Get AI suggested next move and proposal based on regional priorities"
-                    >
-                      <Sparkles size={14} className={suggesting ? 'animate-spin text-indigo-600' : 'text-indigo-600'} />
-                      {suggesting ? 'Drafting...' : '✨ Autofill AI Suggestion'}
-                    </button>
-                  </div>
-                </div>
-
-                {suggestionReasoning && (
-                  <div className="flex items-start gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3.5 text-xs text-indigo-950 shadow-2xs animate-fadeIn">
-                    <Sparkles size={16} className="mt-0.5 shrink-0 text-indigo-600" />
-                    <div className="flex-1">
-                      <span className="font-bold text-indigo-900">AI Strategic Advisor: </span>
-                      <span className="text-indigo-800">{suggestionReasoning}</span>
+                  {suggestionReasoning && (
+                    <div className="flex items-start gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3.5 text-xs text-indigo-950 shadow-2xs animate-fadeIn">
+                      <Sparkles size={16} className="mt-0.5 shrink-0 text-indigo-600" />
+                      <div className="flex-1">
+                        <span className="font-bold text-indigo-900">AI Strategic Advisor: </span>
+                        <span className="text-indigo-800">{suggestionReasoning}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSuggestionReasoning(null)}
+                        className="text-indigo-400 transition hover:text-indigo-700 font-semibold"
+                        title="Dismiss"
+                      >
+                        ✕
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setSuggestionReasoning(null)}
-                      className="text-indigo-400 transition hover:text-indigo-700 font-semibold"
-                      title="Dismiss"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
+                  )}
 
-                {/* RESOURCE ALLOCATION MATRIX TABLE */}
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
-                        <th className="px-4 py-3 min-w-[140px]">Affected Region</th>
-                        {resourceNames.map((res) => {
-                          const maxAvail = scenarioResourceQuantities[res] ?? 0;
+                  {/* RESOURCE ALLOCATION MATRIX TABLE */}
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
+                          <th className="px-4 py-3 min-w-[140px]">Affected Region</th>
+                          {resourceNames.map((res) => {
+                            const maxAvail = scenarioResourceQuantities[res] ?? 0;
+                            return (
+                              <th key={res} className="px-3 py-3 text-center min-w-[120px]">
+                                <div>{res}</div>
+                                <span className="text-[10px] font-normal text-slate-400 font-mono">
+                                  Budget: {maxAvail}
+                                </span>
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {Object.entries(activeProposal).map(([district, resources]) => {
+                          const regionMeta = scenarioRecipients.find(
+                            (r) => (r.name || r) === district
+                          );
+                          const severity = regionMeta?.severity || 'Standard';
+                          const pop = regionMeta?.population;
+
                           return (
-                            <th key={res} className="px-3 py-3 text-center min-w-[120px]">
-                              <div>{res}</div>
-                              <span className="text-[10px] font-normal text-slate-400 font-mono">
-                                Budget: {maxAvail}
-                              </span>
-                            </th>
+                            <tr key={district} className="hover:bg-slate-50/40">
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-slate-900">{district}</div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded ${severity === 'Critical' ? 'bg-red-100 text-red-700' :
+                                      severity === 'High' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
+                                    }`}>
+                                    {severity}
+                                  </span>
+                                  {pop && <span className="text-[10px] text-slate-400 font-mono">{pop.toLocaleString()} pop</span>}
+                                </div>
+                              </td>
+
+                              {resourceNames.map((res) => (
+                                <td key={res} className="px-3 py-2 text-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={resources?.[res] ?? ''}
+                                    onChange={(event) =>
+                                      updateProposalQuantity(
+                                        district,
+                                        res,
+                                        event.target.value
+                                      )
+                                    }
+                                    disabled={loading || status !== 'Your turn'}
+                                    className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono text-xs font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
+                                  />
+                                </td>
+                              ))}
+                            </tr>
                           );
                         })}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {Object.entries(currentProposal).map(([district, resources]) => {
-                        const regionMeta = scenarioRecipients.find(
-                          (r) => (r.name || r) === district
-                        );
-                        const severity = regionMeta?.severity || 'Standard';
-                        const pop = regionMeta?.population;
 
-                        return (
-                          <tr key={district} className="hover:bg-slate-50/40">
-                            <td className="px-4 py-3">
-                              <div className="font-semibold text-slate-900">{district}</div>
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded ${severity === 'Critical' ? 'bg-red-100 text-red-700' :
-                                    severity === 'High' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
-                                  }`}>
-                                  {severity}
-                                </span>
-                                {pop && <span className="text-[10px] text-slate-400 font-mono">{pop.toLocaleString()} pop</span>}
-                              </div>
-                            </td>
+                        {/* TOTAL VALIDATION ROW */}
+                        <tr className="bg-slate-50/90 font-bold border-t-2 border-slate-200">
+                          <td className="px-4 py-3 font-bold text-slate-900">
+                            TOTAL ALLOCATION
+                          </td>
 
-                            {resourceNames.map((res) => (
-                              <td key={res} className="px-3 py-2 text-center">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={resources?.[res] ?? ''}
-                                  onChange={(event) =>
-                                    updateProposalQuantity(
-                                      district,
-                                      res,
-                                      event.target.value
-                                    )
-                                  }
-                                  disabled={loading || status !== 'Your turn'}
-                                  className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono text-xs font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
-                                />
+                          {resourceNames.map((res) => {
+                            const totalVal = columnTotals[res] ?? 0;
+                            const maxVal = scenarioResourceQuantities[res] ?? 0;
+                            const isBalanced = totalVal === maxVal;
+                            const isOver = totalVal > maxVal;
+                            const diff = Math.abs(maxVal - totalVal);
+
+                            return (
+                              <td key={res} className="px-3 py-3 text-center">
+                                <div className="font-mono text-xs font-bold text-slate-900">
+                                  {totalVal} / {maxVal}
+                                </div>
+                                <div className="mt-0.5">
+                                  {isBalanced ? (
+                                    <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-800">
+                                      ✓ Balanced
+                                    </span>
+                                  ) : isOver ? (
+                                    <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold text-red-800">
+                                      ⛔ +{diff} Exceeds
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">
+                                      ⚠ -{diff} Under
+                                    </span>
+                                  )}
+                                </div>
                               </td>
-                            ))}
-                          </tr>
-                        );
-                      })}
-
-                      {/* TOTAL VALIDATION ROW */}
-                      {(() => {
-                        const columnTotals = getProposalColumnTotals(currentProposal);
-                        return (
-                          <tr className="bg-slate-50/90 font-bold border-t-2 border-slate-200">
-                            <td className="px-4 py-3 font-bold text-slate-900">
-                              TOTAL ALLOCATION
-                            </td>
-
-                            {resourceNames.map((res) => {
-                              const totalVal = columnTotals[res] ?? 0;
-                              const maxVal = scenarioResourceQuantities[res] ?? 0;
-                              const isBalanced = totalVal === maxVal;
-                              const isOver = totalVal > maxVal;
-                              const diff = Math.abs(maxVal - totalVal);
-
-                              return (
-                                <td key={res} className="px-3 py-3 text-center">
-                                  <div className="font-mono text-xs font-bold text-slate-900">
-                                    {totalVal} / {maxVal}
-                                  </div>
-                                  <div className="mt-0.5">
-                                    {isBalanced ? (
-                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-800">
-                                        ✓ Balanced
-                                      </span>
-                                    ) : isOver ? (
-                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold text-red-800">
-                                        ⛔ +{diff} Exceeds
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">
-                                        ⚠ -{diff} Under
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        );
-                      })()}
-                    </tbody>
-                  </table>
+                            );
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* RATIONALE & MESSAGE INPUT */}
             {status === 'Your turn' && (
@@ -1744,14 +2008,22 @@ function PracticeMode() {
                       disabled={loading || status !== 'Your turn'}
                       className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:border-blue-500 disabled:bg-slate-100"
                     >
-                      <option value="Counter Offer">Counter Offer</option>
-                      <option value="Offer">Offer</option>
-                      <option value="Accept Offer">Accept Offer</option>
+                      {round === 1 ? (
+                        <option value="Offer">Initial Proposal (Offer)</option>
+                      ) : (
+                        <>
+                          <option value="Counter Offer">Counter Offer</option>
+                          <option value="Accept Offer">Accept Offer</option>
+                          <option value="Reject Offer">Reject Offer</option>
+                        </>
+                      )}
                     </select>
                   </div>
 
                   <p className="text-[11px] text-slate-500">
-                    {action === 'Accept Offer'
+                    {round === 1
+                      ? 'You are submitting the initial master allocation for AI agencies to review.'
+                      : action === 'Accept Offer'
                       ? 'You accept the current allocation and recommend finalizing.'
                       : 'You are submitting a proposed distribution with your rationale.'}
                   </p>
@@ -1767,32 +2039,36 @@ function PracticeMode() {
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
                     disabled={loading || status !== 'Your turn'}
-                    placeholder="e.g., North Sector is critical so I prioritized rescue teams and medical aid there. Central needs debris equipment and shelters, while South retains sufficient medical aid for its population..."
+                    placeholder={round === 1 ? "e.g., North Sector is critical so I prioritized rescue teams and medical aid there. Central needs debris equipment and shelters, while South retains sufficient medical aid for its population..." : "e.g., Addressing Government's concern about rescue teams, while balancing NGO's medical priorities..."}
                     className="w-full rounded-xl border border-slate-300 p-3.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 leading-relaxed"
                   />
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDecision('Accept Offer')}
-                      disabled={loading || status !== 'Your turn'}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-50"
-                    >
-                      <Check size={14} />
-                      Accept Current Proposal
-                    </button>
+                    {round > 1 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleDecision('Accept Offer')}
+                          disabled={loading || status !== 'Your turn'}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-50"
+                        >
+                          <Check size={14} />
+                          Accept Current Proposal
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleDecision('Reject Offer')}
-                      disabled={loading || status !== 'Your turn'}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 hover:bg-red-100 transition disabled:opacity-50"
-                    >
-                      <X size={14} />
-                      Reject
-                    </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDecision('Reject Offer')}
+                          disabled={loading || status !== 'Your turn'}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 hover:bg-red-100 transition disabled:opacity-50"
+                        >
+                          <X size={14} />
+                          Reject
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   <button
@@ -1802,7 +2078,7 @@ function PracticeMode() {
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 px-6 py-3 text-sm font-bold text-white shadow-md transition hover:from-blue-700 hover:to-indigo-800 focus:ring-2 focus:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Send size={16} />
-                    Submit Allocation (Round {round})
+                    Submit {round === 1 ? 'Initial Proposal' : 'Allocation'} (Round {round})
                   </button>
                 </div>
               </div>
@@ -1965,6 +2241,469 @@ function PracticeMode() {
         </aside>
 
       </div>
+
+      {/* ── FINAL NEGOTIATION REPORT (AI VS HUMAN) ── */}
+      {(sessionStatus === 'Agreement reached' ||
+        sessionStatus === 'Deadlock' ||
+        sessionStatus === 'Negotiation ended' ||
+        status === 'Negotiation complete' ||
+        consensus >= 1.0) && (() => {
+        const consensusReached = sessionStatus === 'Agreement reached' || consensus >= 1.0;
+        
+        // 1. Compute Initial Demands for each participant
+        const initialDemands = messages.reduce((acc, item) => {
+          const rawSender = item.sender === 'You' ? 'You (Human Participant)' : item.sender;
+          if (
+            rawSender &&
+            rawSender !== 'System' &&
+            item.proposal &&
+            typeof item.proposal === 'object' &&
+            Object.keys(item.proposal).length > 0 &&
+            !acc[rawSender]
+          ) {
+            acc[rawSender] = item.proposal;
+          }
+          return acc;
+        }, {});
+
+        // Include initial proposals from outcome analysis if present
+        if (finalReport?.outcome_analysis?.agent_performance) {
+          Object.entries(finalReport.outcome_analysis.agent_performance).forEach(([agent, perf]) => {
+            const displayAgent = agent === 'Human Participant' ? 'You (Human Participant)' : agent;
+            if (perf.initial_proposal && !initialDemands[displayAgent]) {
+              initialDemands[displayAgent] = perf.initial_proposal;
+            }
+          });
+        }
+
+        // Ensure human opening demand is recorded if they submitted
+        if (!initialDemands['You (Human Participant)']) {
+          const firstHuman = messages.find(
+            (m) => (m.sender === 'You' || m.sender === 'Human Participant') && m.proposal
+          );
+          if (firstHuman?.proposal) {
+            initialDemands['You (Human Participant)'] = firstHuman.proposal;
+          }
+        }
+
+        // Fallback if empty
+        if (Object.keys(initialDemands).length === 0 && currentProposal) {
+          initialDemands['You (Human Participant)'] = currentProposal;
+        }
+
+        // 2. Agreed or final allocation
+        const agreedAllocation =
+          finalAllocation ||
+          (consensusReached ? currentProposal : null) ||
+          currentProposal ||
+          {};
+
+        // 3. Baseline opening proposal to compare against
+        const baselineOpeningProposal =
+          (selectedDiffSource !== 'opening' && initialDemands[selectedDiffSource])
+            ? initialDemands[selectedDiffSource]
+            : (initialDemands['You (Human Participant)'] ||
+               initialDemands['Government Agent'] ||
+               Object.values(initialDemands)[0] ||
+               currentProposal ||
+               {});
+
+        // 4. Calculate differences
+        const differences = computeAllocationDifference(baselineOpeningProposal, agreedAllocation);
+        const diffMap = {};
+        differences.forEach((item) => {
+          diffMap[`${item.sector}::${item.resource}`] = item;
+        });
+
+        const totalReallocated = differences
+          .filter((d) => d.diff > 0)
+          .reduce((sum, d) => sum + d.diff, 0);
+        const totalConceded = differences
+          .filter((d) => d.diff < 0)
+          .reduce((sum, d) => sum + Math.abs(d.diff), 0);
+        const increasedCount = differences.filter((d) => d.diff > 0).length;
+        const concededCount = differences.filter((d) => d.diff < 0).length;
+        const unchangedCount = differences.filter((d) => d.diff === 0).length;
+        const outcomeAnalysis = finalReport?.outcome_analysis;
+
+        return (
+          <div className="mt-8 rounded-[1.75rem] border border-emerald-200 bg-emerald-50/80 p-6 sm:p-8 shadow-sm">
+            {/* Header */}
+            <div className="flex items-center gap-2.5 font-bold text-emerald-800 text-xl sm:text-2xl mb-2">
+              <CheckCircle size={26} className="text-emerald-700" />
+              Final Negotiation Report
+            </div>
+            <p className="text-sm text-emerald-700/90 mb-6 font-medium">
+              {consensusReached
+                ? 'The negotiation concluded successfully. Below are the opening positions and the final agreed allocation.'
+                : 'The negotiation concluded without unanimous agreement. Below are the opening positions and the final proposal.'}
+            </p>
+
+            {/* Two-Column Grid: Opening Demands vs Final Agreed Allocation */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Opening demands */}
+              <div>
+                <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+                  Initial Requirements (Opening Demands)
+                </h3>
+                <div className="space-y-4">
+                  {Object.entries(initialDemands).map(([agentName, demands]) => {
+                    const s = getPracticeAgentStyle(agentName);
+                    return (
+                      <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
+                          <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {demands && typeof demands === 'object' && !Array.isArray(demands) ? (
+                            isNestedAllocation(demands) ? (
+                              Object.entries(demands).map(([sec, val]) => (
+                                <div key={sec} className="w-full">
+                                  <p className="text-xs font-bold text-slate-700 mb-1">{sec}</p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {Object.entries(val || {}).map(([resource, amount]) => (
+                                      <span
+                                        key={`${sec}-${resource}`}
+                                        className={`text-xs font-medium rounded-md px-2.5 py-1 ${s.chip}`}
+                                      >
+                                        {resource}: {amount}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              Object.entries(demands).map(([res, val]) => (
+                                <span
+                                  key={res}
+                                  className={`text-xs font-medium rounded-md px-2.5 py-1 ${s.chip}`}
+                                >
+                                  {res}: {val}
+                                </span>
+                              ))
+                            )
+                          ) : (
+                            <span className="text-xs text-slate-500">{String(demands)}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Final Agreed Allocation */}
+              <div>
+                <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+                  {consensusReached ? 'Final Agreed Allocation' : 'Latest Proposal (No Agreement Reached)'}
+                </h3>
+                <div className="bg-[#009A65] text-white rounded-2xl p-6 shadow-md min-h-[160px]">
+                  <p className="text-sm font-medium text-emerald-50 mb-5">
+                    {consensusReached
+                      ? 'This allocation was unanimously agreed upon:'
+                      : 'No unanimous allocation was reached. Latest allocation on table:'}
+                  </p>
+                  {Object.keys(agreedAllocation).length > 0 ? (
+                    isNestedAllocation(agreedAllocation) ? (
+                      <div className="space-y-4">
+                        {Object.entries(agreedAllocation).map(([sectorName, allocation]) => (
+                          <div key={sectorName}>
+                            <p className="text-sm font-bold mb-2">{sectorName}</p>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(allocation || {}).map(([resource, amount]) => {
+                                const diffInfo = diffMap[`${sectorName}::${resource}`];
+                                const d = diffInfo ? diffInfo.diff : 0;
+                                return (
+                                  <span
+                                    key={`${sectorName}-${resource}`}
+                                    className="bg-[#00B47A] text-white rounded-xl px-4 py-2 text-xs font-bold shadow-sm inline-flex items-center gap-2"
+                                  >
+                                    <span>{resource}: {amount}</span>
+                                    {diffInfo && (
+                                      <span
+                                        className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${
+                                          d > 0
+                                            ? 'bg-emerald-950/40 text-emerald-200 border border-emerald-400/30'
+                                            : d < 0
+                                            ? 'bg-amber-950/40 text-amber-200 border border-amber-400/30'
+                                            : 'bg-emerald-800/40 text-emerald-100/70'
+                                        }`}
+                                        title={`Initial opening: ${diffInfo.initial} → Final agreed: ${amount} (Difference: ${d > 0 ? `+${d}` : d})`}
+                                      >
+                                        {d > 0 ? `+${d}` : d < 0 ? `${d}` : '±0'}
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2.5">
+                        {Object.entries(agreedAllocation).map(([resource, amount]) => {
+                          const diffInfo =
+                            diffMap[`Overall Allocation::${resource}`] ||
+                            diffMap[`General Pool::${resource}`];
+                          const d = diffInfo ? diffInfo.diff : 0;
+                          return (
+                            <span
+                              key={resource}
+                              className="bg-[#00B47A] text-white rounded-xl px-4 py-2 text-xs font-bold shadow-sm inline-flex items-center gap-2"
+                            >
+                              <span>{resource}: {amount}</span>
+                              {diffInfo && (
+                                <span
+                                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${
+                                    d > 0
+                                      ? 'bg-emerald-950/40 text-emerald-200 border border-emerald-400/30'
+                                      : d < 0
+                                      ? 'bg-amber-950/40 text-amber-200 border border-amber-400/30'
+                                      : 'bg-emerald-800/40 text-emerald-100/70'
+                                  }`}
+                                >
+                                  {d > 0 ? `+${d}` : d < 0 ? `${d}` : '±0'}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-sm italic text-emerald-100">No valid allocations were recorded.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── RESOURCE VARIANCE & DIFFERENCE ANALYSIS (DIFFERENCE OCCURRED) ── */}
+            <div className="mt-8 pt-6 border-t border-emerald-200/80">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                <div>
+                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-emerald-900 flex items-center gap-2">
+                    <BarChart3 size={18} className="text-emerald-700" />
+                    Resource Variance & Difference Analysis
+                  </h3>
+                  <p className="text-xs text-emerald-700/80 mt-0.5">
+                    Shows how much difference occurred between initial demands and final agreed allocation across all sectors.
+                  </p>
+                </div>
+
+                {/* Comparison Source Filter Tabs */}
+                {Object.keys(initialDemands).length > 1 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold text-emerald-800">Compared against:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDiffSource('opening')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                        selectedDiffSource === 'opening'
+                          ? 'bg-emerald-700 text-white shadow-sm'
+                          : 'bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-100/60'
+                      }`}
+                    >
+                      Baseline Opening Demands
+                    </button>
+                    {Object.keys(initialDemands).map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => setSelectedDiffSource(name)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                          selectedDiffSource === name
+                            ? 'bg-emerald-700 text-white shadow-sm'
+                            : 'bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-100/60'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Variance Metric Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Reallocated</p>
+                  <p className="mt-1 text-lg font-extrabold text-emerald-800">
+                    {totalReallocated} <span className="text-xs font-normal text-slate-500">units</span>
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Resources shifted to meet needs</p>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Increased Allocations</p>
+                  <p className="mt-1 text-lg font-extrabold text-emerald-700">
+                    {increasedCount} <span className="text-xs font-normal text-slate-500">resources</span>
+                  </p>
+                  <p className="text-[11px] text-emerald-600 mt-0.5">Secured higher shares</p>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Concessions Made</p>
+                  <p className="mt-1 text-lg font-extrabold text-amber-700">
+                    {concededCount} <span className="text-xs font-normal text-slate-500">resources</span>
+                  </p>
+                  <p className="text-[11px] text-amber-600 mt-0.5">{totalConceded} units relinquished</p>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Maintained Unchanged</p>
+                  <p className="mt-1 text-lg font-extrabold text-slate-800">
+                    {unchangedCount} <span className="text-xs font-normal text-slate-500">resources</span>
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Preserved from opening demand</p>
+                </div>
+              </div>
+
+              {/* Difference Breakdown Table */}
+              <div className="overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-emerald-50/70 text-[11px] font-extrabold uppercase tracking-wider text-emerald-900 border-b border-emerald-200">
+                      <tr>
+                        <th className="px-4 py-3">Sector / District</th>
+                        <th className="px-4 py-3">Resource Item</th>
+                        <th className="px-4 py-3 text-center">Opening Demand</th>
+                        <th className="px-4 py-3 text-center">Final Agreed</th>
+                        <th className="px-4 py-3 text-center">Difference Occurred</th>
+                        <th className="px-4 py-3 text-right">Variance Trend</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {differences.length > 0 ? (
+                        differences.map((item, idx) => {
+                          const isPos = item.diff > 0;
+                          const isNeg = item.diff < 0;
+                          return (
+                            <tr
+                              key={`${item.sector}-${item.resource}-${idx}`}
+                              className={`transition hover:bg-slate-50/70 ${
+                                isPos ? 'bg-emerald-50/30' : isNeg ? 'bg-amber-50/20' : ''
+                              }`}
+                            >
+                              <td className="px-4 py-3 font-bold text-slate-800">
+                                {item.sector}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-slate-700">
+                                {item.resource}
+                              </td>
+                              <td className="px-4 py-3 text-center font-semibold text-slate-600">
+                                {item.initial}
+                              </td>
+                              <td className="px-4 py-3 text-center font-bold text-slate-900">
+                                {item.final}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${
+                                    isPos
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : isNeg
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}
+                                >
+                                  {isPos && <TrendingUp size={12} />}
+                                  {isNeg && <TrendingDown size={12} />}
+                                  {!isPos && !isNeg && <Minus size={12} />}
+                                  {isPos ? `+${item.diff}` : item.diff} ({item.pct})
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <span
+                                  className={`font-semibold ${
+                                    isPos
+                                      ? 'text-emerald-700'
+                                      : isNeg
+                                      ? 'text-amber-700'
+                                      : 'text-slate-500'
+                                  }`}
+                                >
+                                  {isPos ? 'Increased Allocation' : isNeg ? 'Concession / Shifted' : 'Maintained'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-6 text-center text-slate-400 italic">
+                            No differences recorded.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Optional Expandable Detailed Outcome Summary */}
+              {outcomeAnalysis && (
+                <div className="mt-6 pt-4 border-t border-emerald-200/60">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedOutcome(!showAdvancedOutcome)}
+                    className="flex items-center gap-2 text-xs font-bold text-emerald-800 hover:text-emerald-900"
+                  >
+                    {showAdvancedOutcome ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {showAdvancedOutcome ? 'Hide Advanced Metrics & Concession Breakdown' : 'Show Advanced Metrics & Concession Breakdown'}
+                  </button>
+
+                  {showAdvancedOutcome && (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 mb-3">
+                          Consensus Outcome Summary
+                        </h4>
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+                          {[
+                            ['Status', outcomeAnalysis.status],
+                            ['Outcome', outcomeAnalysis.outcome],
+                            ['Rounds Used', outcomeAnalysis.rounds],
+                            ['Agreement Round', outcomeAnalysis.agreement_terms?.agreement_round],
+                            ['Unanimous Agreement', displayBoolean(outcomeAnalysis.agreement_terms?.unanimous_agreement)],
+                            ['Accepted Participants', outcomeAnalysis.agreement_terms?.accepted_participants?.join(', ')],
+                            ['Total Participants', outcomeAnalysis.agreement_terms?.total_participants],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-lg bg-slate-50 p-2.5">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+                              <p className="mt-0.5 font-semibold text-slate-800">{displayValue(value)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Per-Agent Concession Patterns */}
+                      {Object.entries(outcomeAnalysis.concession_patterns || {}).length > 0 && (
+                        <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 mb-3">
+                            Participant Concession Patterns
+                          </h4>
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+                            {Object.entries(outcomeAnalysis.concession_patterns).map(([agentName, pattern]) => (
+                              <div key={agentName} className="rounded-lg bg-slate-50 p-3">
+                                <p className="font-bold text-slate-800 mb-1">{agentName}</p>
+                                <p className="text-slate-600">Concessions made: <strong>{displayValue(pattern?.concession_count)}</strong></p>
+                                <p className="text-slate-600">Quantity conceded: <strong>{displayValue(pattern?.total_quantity_conceded)}</strong></p>
+                                <p className="text-slate-600">Contributed to agreement: <strong>{displayBoolean(pattern?.contributed_to_final_agreement)}</strong></p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

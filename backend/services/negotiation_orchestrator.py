@@ -414,29 +414,10 @@ class NegotiationOrchestrator:
             }
         )
 
-        # In practice mode, the human is the 4th negotiator. Their turn completes this round!
+        # In practice mode, the human speaks at the start of each round.
+        # AI agents respond next in step_practice_round before round advances.
         if state.get("practice_mode"):
-            is_final_round = (state["current_round"] >= state["max_rounds"])
-            if state.get("negotiation_ended"):
-                pass
-            elif is_final_round:
-                state["max_rounds_reached"] = True
-                state["negotiation_ended"] = True
-                # Check if consensus was reached or all participants agreed on final proposal
-                if state.get("consensus_reached") or state.get("consensus", 0.0) >= 0.75:
-                    state["status"] = "agreement_reached"
-                    state["consensus_reached"] = True
-                    state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
-                    state["final_report"] = self._build_final_report(state)
-                    print("[TERMINATION] reason=practice_max_rounds_consensus_achieved")
-                else:
-                    state["status"] = "deadlock_no_consensus"
-                    state["final_report"] = self._build_final_report(state)
-                    print("[TERMINATION] reason=practice_max_rounds_reached")
-            else:
-                state["current_round"] += 1
-                state["prev_proposals"] = dict(state.get("last_proposals", {}))
-                state["status"] = "ongoing"
+            state["status"] = "ongoing"
 
         return {
             "success": True,
@@ -1330,7 +1311,92 @@ class NegotiationOrchestrator:
             ai_result = self.step(session_id)
             ai_responses.append(ai_result)
 
+        # After all configured AI agents have responded in this round:
+        if state.get("practice_mode") and not state.get("negotiation_ended"):
+            if state["current_round"] >= state["max_rounds"]:
+                state["awaiting_final_decision"] = True
+                state["status"] = "Final Decision"
+                print(f"[PRACTICE] Round {state['current_round']}/{state['max_rounds']} AI deliberation complete. Awaiting human final decision.")
+            else:
+                state["current_round"] += 1
+                state["prev_proposals"] = dict(state.get("last_proposals", {}))
+                state["status"] = "ongoing"
+                state["awaiting_final_decision"] = False
+                print(f"[PRACTICE] Round {state['current_round'] - 1} complete. Advanced to Round {state['current_round']}/{state['max_rounds']}.")
+
         return ai_responses
+
+    # =========================================================
+    # PRACTICE MODE: FINAL EXECUTIVE DECISION
+    # =========================================================
+
+    def handle_final_decision(
+        self,
+        session_id: str,
+        decision: str,
+    ) -> Dict[str, Any]:
+        """
+        Handles the human's final executive decision after all AI deliberation
+        rounds are complete (Accept -> agreement, Reject -> breakdown, Reset -> fresh start).
+        """
+        if session_id not in self.sessions:
+            raise ValueError("Negotiation session not found.")
+
+        state = self.sessions[session_id]["state"]
+        normalized = str(decision or "").strip().lower()
+
+        if normalized == "accept":
+            state["consensus"] = 1.0
+            state["consensus_reached"] = True
+            state["negotiation_ended"] = True
+            state["status"] = "agreement_reached"
+            state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
+            state["final_report"] = self._build_final_report(state)
+            state["awaiting_final_decision"] = False
+            state["history"].append({
+                "agent": "Human Participant",
+                "message": "Human Crisis Coordinator accepts the agreement and finalizes the disaster relief resource distribution.",
+                "reasoning": "Final executive decision: agreement accepted.",
+                "stance": "accept",
+                "round": state["current_round"],
+                "action": "ACCEPT",
+                "parsed_proposal": state.get("final_allocation", {}),
+            })
+            print("[PRACTICE] Human accepted agreement on final decision.")
+        elif normalized == "reject":
+            state["consensus_reached"] = False
+            state["negotiation_ended"] = True
+            state["status"] = "negotiation_breakdown"
+            state["final_report"] = self._build_final_report(state)
+            state["awaiting_final_decision"] = False
+            state["history"].append({
+                "agent": "Human Participant",
+                "message": "Human Crisis Coordinator rejects the final proposal. Negotiation has concluded without reaching an agreement.",
+                "reasoning": "Final executive decision: proposal rejected.",
+                "stance": "reject",
+                "round": state["current_round"],
+                "action": "REJECT",
+                "parsed_proposal": state.get("current_proposal", {}),
+            })
+            print("[PRACTICE] Human rejected proposal on final decision.")
+        elif normalized == "reset":
+            state["current_round"] = 1
+            state["current_agent_idx"] = 0
+            state["history"] = []
+            state["consensus"] = 0.0
+            state["consensus_reached"] = False
+            state["negotiation_ended"] = False
+            state["max_rounds_reached"] = False
+            state["status"] = "ongoing"
+            state["accepted_proposals"] = {}
+            state["last_proposals"] = {}
+            state["current_proposal"] = {}
+            state["final_allocation"] = None
+            state["final_report"] = None
+            state["awaiting_final_decision"] = False
+            print("[PRACTICE] Negotiation session reset.")
+
+        return state
 
     # =========================================================
     # HUMAN STRATEGIST / AUTO-DRAFT SUGGESTION
