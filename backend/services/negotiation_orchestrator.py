@@ -7,7 +7,11 @@ from agents.government_agent import GovernmentAgent
 from agents.ngo_agent import NGOAgent
 from agents.district_agent import DistrictAdministrationAgent
 
-from services.gemini_service import ask_model, get_gemini_metrics
+from services.gemini_service import (
+    ask_model,
+    get_gemini_metrics,
+    generate_human_suggestion,
+)
 from services.evaluation_engine import (
     calculate_consensus,
     detect_deadlock,
@@ -340,22 +344,62 @@ class NegotiationOrchestrator:
 
         incoming_proposal_snapshot = dict(state.get("current_proposal", {}))
 
+        is_identical_to_incoming = (
+            bool(structured_proposal)
+            and bool(incoming_proposal_snapshot)
+            and structured_proposal == incoming_proposal_snapshot
+        )
+
+        # If the human submits the exact same allocation as the current proposal,
+        # treat it as an endorsement / acceptance of that allocation!
+        if is_identical_to_incoming and normalized_action in ("OFFER", "COUNTER"):
+            print("[CONSENSUS] human proposed allocation identical to active proposal; treating as endorsement/acceptance")
+            normalized_action = "ACCEPT"
+
         if normalized_action in ("OFFER", "COUNTER") and structured_proposal:
-            # Mirror what _step_async does for AI moves: this proposal
-            # becomes the thing every agent evaluates next round, and any
-            # previous unanimous acceptance of the old proposal no longer
-            # applies.
             state["last_proposals"]["Human Participant"] = dict(structured_proposal)
             state["current_proposal"] = dict(structured_proposal)
-            state["accepted_proposals"] = {}
+            
+            # Preserve existing acceptances from other agents that match this proposal
+            preserved = {"Human Participant": dict(structured_proposal)}
+            for ag_name, ag_prop in state.get("accepted_proposals", {}).items():
+                if ag_prop == state["current_proposal"]:
+                    preserved[ag_name] = dict(ag_prop)
+                    print(f"[CONSENSUS] preserving prior acceptance for {ag_name}")
+            state["accepted_proposals"] = preserved
+
         elif normalized_action == "ACCEPT" and state.get("current_proposal"):
-            state["accepted_proposals"]["Human Participant"] = dict(
-                state["current_proposal"]
-            )
-            print(
-                "[CONSENSUS] preserving acceptance: "
-                "Human Participant"
-            )
+            target_prop = dict(structured_proposal) if structured_proposal else dict(state["current_proposal"])
+            state["last_proposals"]["Human Participant"] = dict(target_prop)
+            state["current_proposal"] = dict(target_prop)
+            state["accepted_proposals"]["Human Participant"] = dict(target_prop)
+            print("[CONSENSUS] human accepted current proposal: Human Participant")
+
+        # -----------------------------------------------------
+        # UNANIMOUS CONSENSUS CHECK ACROSS ALL 4 PARTICIPANTS
+        # -----------------------------------------------------
+        agent_names = [item.name for item in self.sessions[session_id]["agents"]]
+        consensus_participants = ["Human Participant", *agent_names]
+        accepted_props = state.get("accepted_proposals", {})
+        curr_prop = state.get("current_proposal", {})
+
+        agreed_count = sum(
+            1 for name in consensus_participants
+            if accepted_props.get(name) == curr_prop
+        )
+        state["consensus"] = round(agreed_count / max(1, len(consensus_participants)), 2)
+
+        if (
+            curr_prop
+            and agreed_count == len(consensus_participants)
+        ):
+            state["consensus"] = 1.0
+            state["consensus_reached"] = True
+            state["negotiation_ended"] = True
+            state["final_allocation"] = dict(curr_prop)
+            state["status"] = "agreement_reached"
+            state["final_report"] = self._build_final_report(state)
+            print("[TERMINATION] reason=unanimous_consensus_all_4_participants")
 
         state["history"].append(
             {
@@ -369,6 +413,30 @@ class NegotiationOrchestrator:
                 "parsed_proposal": structured_proposal,
             }
         )
+
+        # In practice mode, the human is the 4th negotiator. Their turn completes this round!
+        if state.get("practice_mode"):
+            is_final_round = (state["current_round"] >= state["max_rounds"])
+            if state.get("negotiation_ended"):
+                pass
+            elif is_final_round:
+                state["max_rounds_reached"] = True
+                state["negotiation_ended"] = True
+                # Check if consensus was reached or all participants agreed on final proposal
+                if state.get("consensus_reached") or state.get("consensus", 0.0) >= 0.75:
+                    state["status"] = "agreement_reached"
+                    state["consensus_reached"] = True
+                    state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
+                    state["final_report"] = self._build_final_report(state)
+                    print("[TERMINATION] reason=practice_max_rounds_consensus_achieved")
+                else:
+                    state["status"] = "deadlock_no_consensus"
+                    state["final_report"] = self._build_final_report(state)
+                    print("[TERMINATION] reason=practice_max_rounds_reached")
+            else:
+                state["current_round"] += 1
+                state["prev_proposals"] = dict(state.get("last_proposals", {}))
+                state["status"] = "ongoing"
 
         return {
             "success": True,
@@ -384,43 +452,55 @@ class NegotiationOrchestrator:
         current_proposal,
         resource_quantities,
     ):
-        if (
-            not isinstance(proposal, dict)
-            or not isinstance(current_proposal, dict)
-            or not current_proposal
-            or set(proposal) != set(current_proposal)
-        ):
+        if not isinstance(proposal, dict) or not proposal:
             return None
 
         available_by_resource = {
             str(resource).lower(): int(quantity)
             for resource, quantity in resource_quantities.items()
         }
+
+        # Build clean lookup for resource names in original casing
+        resource_casing = {
+            str(resource).lower(): str(resource)
+            for resource in resource_quantities.keys()
+        }
+
         validated = {}
 
-        for district, current_resources in current_proposal.items():
-            submitted_resources = proposal.get(district)
-            if (
-                not isinstance(current_resources, dict)
-                or not isinstance(submitted_resources, dict)
-                or set(submitted_resources) != set(current_resources)
-            ):
+        for district, submitted_resources in proposal.items():
+            if not isinstance(submitted_resources, dict):
                 return None
+            district_key = str(district).strip()
+            validated[district_key] = {}
 
-            validated[district] = {}
-            for resource in current_resources:
-                quantity = submitted_resources[resource]
-                resource_key = str(resource).lower()
-                if (
-                    resource_key not in available_by_resource
-                    or isinstance(quantity, bool)
-                    or not isinstance(quantity, (int, float))
-                    or int(quantity) != quantity
-                    or quantity < 0
-                    or quantity > available_by_resource[resource_key]
-                ):
+            for resource, quantity in submitted_resources.items():
+                res_key = str(resource).strip().lower()
+                if res_key not in available_by_resource:
+                    # Skip or ignore unknown resources, or validate if in available
+                    continue
+                if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
                     return None
-                validated[district][resource] = int(quantity)
+                val = int(quantity)
+                if val < 0 or val > available_by_resource[res_key]:
+                    return None
+                canonical_res_name = resource_casing.get(res_key, str(resource))
+                validated[district_key][canonical_res_name] = val
+
+        if not validated:
+            return None
+
+        # Check zero-sum bounds across all districts for every resource
+        for res_clean, max_avail in available_by_resource.items():
+            total_for_res = sum(
+                val
+                for d_alloc in validated.values()
+                for r_name, val in d_alloc.items()
+                if r_name.lower() == res_clean
+            )
+            if total_for_res > max_avail:
+                print(f"[VALIDATION ERROR] Resource {res_clean} total {total_for_res} exceeds max {max_avail}")
+                return None
 
         return validated
 
@@ -775,7 +855,7 @@ class NegotiationOrchestrator:
                 None
             )
 
-        if state["current_round"] >= state["max_rounds"]:
+        if not state.get("practice_mode") and state["current_round"] > state["max_rounds"]:
             state["max_rounds_reached"] = True
             state["negotiation_ended"] = True
 
@@ -1107,6 +1187,18 @@ class NegotiationOrchestrator:
             except Exception:
                 state["consensus"] = 0.0
 
+            if state.get("practice_mode"):
+                # In Practice Mode, the 3 AI agents have finished their turns for this round.
+                # Do NOT advance round or declare termination until the Human participant has evaluated and spoken!
+                state["status"] = "ongoing"
+                return self._build_response(
+                    state,
+                    agent,
+                    message,
+                    reasoning,
+                    stance
+                )
+
             is_final_round = (state["current_round"] >= state["max_rounds"])
 
             # -----------------------------------------------------
@@ -1202,6 +1294,80 @@ class NegotiationOrchestrator:
                 session_id
             )
         )
+
+    # =========================================================
+    # PRACTICE ROUNDTABLE STEP
+    # =========================================================
+
+    def step_practice_round(
+        self,
+        session_id: str
+    ) -> list:
+        """
+        Executes a complete AI deliberation round in Practice Mode.
+        All configured AI agents (Government, NGO, District) evaluate
+        the current state and respond in sequence within the current round.
+        """
+        if session_id not in self.sessions:
+            raise ValueError(
+                "Negotiation session not found."
+            )
+
+        entry = self.sessions[session_id]
+        agents = entry["agents"]
+        state = entry["state"]
+
+        if state.get("negotiation_ended"):
+            return [self._build_response(state, None, None, None, None)]
+
+        # Ensure we start from the first agent in the roster for this round
+        state["current_agent_idx"] = 0
+        ai_responses = []
+
+        for _ in range(len(agents)):
+            if state.get("negotiation_ended"):
+                break
+            ai_result = self.step(session_id)
+            ai_responses.append(ai_result)
+
+        return ai_responses
+
+    # =========================================================
+    # HUMAN STRATEGIST / AUTO-DRAFT SUGGESTION
+    # =========================================================
+
+    def get_human_suggestion(
+        self,
+        session_id: str
+    ) -> dict:
+        """
+        Generates an in-character strategic move suggestion for the human
+        crisis coordinator in Practice Mode based on the current round,
+        other agents' recent demands, and zero-sum constraints.
+        """
+        if session_id not in self.sessions:
+            raise ValueError(
+                "Negotiation session not found."
+            )
+
+        entry = self.sessions[session_id]
+        state = entry["state"]
+        scenario = state.get("scenario", {})
+        resource_quantities = state.get("resource_quantities", {})
+
+        suggestion = generate_human_suggestion(
+            scenario=scenario,
+            current_round=state.get("current_round", 1),
+            max_rounds=state.get("max_rounds", 5),
+            history=state.get("history", []),
+            last_proposals=state.get("last_proposals", {}),
+            current_proposal=state.get("current_proposal", {}),
+            resource_quantities=resource_quantities,
+            agents=state.get("agents", []),
+        )
+
+        return suggestion
+
 
     # =========================================================
     # DEADLOCK RESOLUTION (GAP 3)

@@ -77,3 +77,4 @@ htmlcov/
 *.tmp
 *.temp
 *.swp
+scratch/

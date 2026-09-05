@@ -150,22 +150,29 @@ for key in keys:
 _client_cycle = itertools.cycle(_clients) if _clients else None
 
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-_GROQ_KEYS = [
-    key.strip().strip("\"'")
-    for key in (
-        os.getenv("GROQ_API_KEY_1", ""),
-        os.getenv("GROQ_API_KEY_2", ""),
-    )
-    if key.strip().strip("\"'").lower() not in {
-        "",
-        "your_api_key",
-        "your-key",
-        "changeme",
-        "replace_me",
-        "none",
-        "null",
-    }
-]
+
+_raw_groq_keys = []
+if os.getenv("GROQ_API_KEY"):
+    _raw_groq_keys.append(os.getenv("GROQ_API_KEY"))
+if os.getenv("GROQ_API_KEYS"):
+    _raw_groq_keys.extend(os.getenv("GROQ_API_KEYS").split(","))
+if os.getenv("GROQ_API_KEY_1"):
+    _raw_groq_keys.append(os.getenv("GROQ_API_KEY_1"))
+if os.getenv("GROQ_API_KEY_2"):
+    _raw_groq_keys.append(os.getenv("GROQ_API_KEY_2"))
+
+_GROQ_KEYS = []
+_seen_groq = set()
+for k in _raw_groq_keys:
+    cleaned = k.strip().strip("\"'")
+    if (
+        cleaned
+        and cleaned.lower() not in {"", "your_api_key", "your-key", "changeme", "replace_me", "none", "null"}
+        and cleaned not in _seen_groq
+    ):
+        _seen_groq.add(cleaned)
+        _GROQ_KEYS.append(cleaned)
+
 _groq_clients = []
 
 if Groq is not None:
@@ -177,6 +184,9 @@ if Groq is not None:
                 f"[GROQ] client initialization failed: "
                 f"{type(exc).__name__}"
             )
+    print(f"[GROQ] Initialized {len(_groq_clients)} client(s) with model={GROQ_MODEL}")
+else:
+    print("[GROQ] groq package not installed or import failed")
 
 def get_client():
     return next(_client_cycle) if _client_cycle else None
@@ -901,13 +911,16 @@ async def ask_model(
 - Only consider ACCEPTING easily in the final rounds (Round {max_rounds - 1} or {max_rounds}) to avoid a total failure to reach consensus."""
 
     practice_mode_instruction = """
-=== HUMAN PRACTICE MODE ===
-- Evaluate the current human proposal against your objectives and constraints.
-- ACCEPT when the proposal is valid and reasonably satisfies your important requirements.
-- COUNTER only when a meaningful requirement is not satisfied.
-- Do not automatically counter because the proposal is not ideal.
-- Avoid unnecessary or repetitive counter-proposals.
-- As the round number increases, become more willing to compromise and reach agreement.
+=== MULTI-AGENT ROUNDTABLE PRACTICE MODE ===
+- You are seated in an Emergency Operations Center conference room alongside a Human Crisis Coordinator and other agency leaders (Government, NGO, District Administration).
+- All 4 of you are negotiating the SAME disaster relief resource pool for the affected areas.
+- The Human Coordinator has just submitted/revised a master proposal.
+- Evaluate the Human Coordinator's proposal and speech carefully against your core operational priorities and constraints.
+- If other AI department heads have already spoken earlier in this round, DIRECTLY ADDRESS their points (e.g. agree with their valid points, push back if they are taking too much, or offer specific compromises).
+- If the allocation is fair, adheres to total resource availability, and reasonably meets your high-priority needs, choose ACCEPT.
+- If an essential requirement is unmet, choose COUNTER with concrete numbers for all areas and explain the exact trade-offs needed.
+- Speak naturally and passionately in the first person ("As the Government authority...", "Our medical teams at the NGO cannot...", "The District roads are blocked..."). Never sound robotic or generic.
+- As the round number approaches the maximum deadline, demonstrate increasing urgency to collaborate and reach a life-saving consensus before time runs out.
 """ if practice_mode else ""
     practice_mode_section = (
         f"\n{practice_mode_instruction}\n"
@@ -1011,11 +1024,11 @@ Return ONLY valid JSON:
                     print("[GROQ] success")
                     return result
 
-                print(f"[GROQ] failed: {failure}")
+                print(f"[GROQ] validation failed: {failure}")
             except Exception as exc:
-                print(f"[GROQ] failed: {_failure_category(exc)}")
+                print(f"[GROQ] request failed ({_failure_category(exc)}): {exc}")
     else:
-        print("[GROQ] failed: no configured client")
+        print(f"[GROQ] failed: no configured client (checked keys: {_GROQ_KEYS})")
 
     print("[GEMINI] fallback request")
 
@@ -1093,3 +1106,408 @@ Return ONLY valid JSON:
         last_proposals,
         last_failure,
     )
+
+
+# =========================================================
+# AI STRATEGIST / HUMAN SUGGESTION GENERATOR
+# =========================================================
+
+# =========================================================
+# AI STRATEGIST / HUMAN SUGGESTION GENERATOR
+# =========================================================
+
+def _generate_balanced_compromise_allocation(
+    recipients: list,
+    resource_quantities: dict,
+    last_proposals: dict = None,
+    current_proposal: dict = None,
+    agents: list = None,
+) -> dict:
+    """
+    Computes a balanced, valid sector-by-sector allocation satisfying zero-sum constraints.
+    Rigorously aligns resource distribution with each region's explicit priority needs,
+    emergency severity levels, and population, while reconciling recent agent proposals.
+    """
+    if not resource_quantities:
+        return {}
+
+    # Determine allocation targets (keys): preserve current_proposal keys if present,
+    # otherwise use recipient names from scenario, or fallback to default agent names.
+    if current_proposal and isinstance(current_proposal, dict) and len(current_proposal) > 0:
+        target_keys = list(current_proposal.keys())
+    elif recipients:
+        target_keys = [
+            r["name"] if isinstance(r, dict) else str(r)
+            for r in recipients
+        ]
+    else:
+        target_keys = [
+            "Government Agent",
+            "NGO Agent",
+            "District Administration Agent",
+        ]
+
+    if not target_keys:
+        return {}
+
+    # Build recipient metadata lookup for region priority matching
+    recipients_by_name = {}
+    if recipients:
+        for r in recipients:
+            if isinstance(r, dict):
+                recipients_by_name[r.get("name", "").strip().lower()] = r
+
+    # Build agent role lookup if keys are agent names
+    agents_by_name = {}
+    if agents:
+        for a in agents:
+            if isinstance(a, dict):
+                agents_by_name[a.get("name", "").strip().lower()] = a
+
+    # Check if last_proposals has past data from communication
+    has_valid_proposals = False
+    avg_proposals = {k: {} for k in target_keys}
+    if last_proposals and isinstance(last_proposals, dict):
+        valid_props = [p for p in last_proposals.values() if isinstance(p, dict) and p]
+        if valid_props:
+            has_valid_proposals = True
+            for res_name in resource_quantities:
+                for k in target_keys:
+                    vals = [
+                        p.get(k, {}).get(res_name, 0)
+                        for p in valid_props
+                        if isinstance(p.get(k), dict) and res_name in p.get(k, {})
+                    ]
+                    if vals:
+                        avg_proposals[k][res_name] = sum(vals) / len(vals)
+
+    balanced_allocation = {k: {} for k in target_keys}
+
+    for res_name, total_qty in resource_quantities.items():
+        total_avail = int(total_qty)
+        remaining = total_avail
+        res_clean = res_name.strip().lower()
+
+        # Compute priority demand weight for each target key for this specific resource
+        demand_weights = {}
+        for k in target_keys:
+            k_clean = k.strip().lower()
+            rec = recipients_by_name.get(k_clean)
+
+            if rec:
+                # Region-based key: weight by Severity, Population, and Explicit Needs
+                sev = str(rec.get("severity", "medium")).lower()
+                if "crit" in sev:
+                    sev_w = 3.5
+                elif "high" in sev:
+                    sev_w = 2.2
+                elif "med" in sev:
+                    sev_w = 1.5
+                else:
+                    sev_w = 1.0
+
+                pop = rec.get("population", 10000)
+                try:
+                    pop_num = float(pop)
+                    pop_w = max(0.8, min(2.5, (pop_num / 10000.0) ** 0.5))
+                except (ValueError, TypeError):
+                    pop_w = 1.0
+
+                # Check explicit regional needs for this resource
+                needs = [str(n).lower() for n in rec.get("needs", [])]
+                is_explicit_need = any(
+                    res_clean in n or n in res_clean or
+                    any(word in n for word in res_clean.split() if len(word) > 3)
+                    for n in needs
+                )
+                need_mult = 3.5 if is_explicit_need else 0.6
+                demand_weights[k] = sev_w * pop_w * need_mult
+
+            elif "government" in k_clean:
+                # Government Agent focus: search & rescue, infrastructure, critical law/order
+                if any(w in res_clean for w in ["rescue", "water", "infrastructure", "transport", "boat"]):
+                    demand_weights[k] = 3.0
+                else:
+                    demand_weights[k] = 1.5
+            elif "ngo" in k_clean:
+                # NGO Agent focus: medical aid, temporary shelters, humanitarian food
+                if any(w in res_clean for w in ["medic", "shelter", "food", "health", "aid"]):
+                    demand_weights[k] = 3.2
+                else:
+                    demand_weights[k] = 1.2
+            elif "district" in k_clean:
+                # District Administration focus: debris clearance, municipal equipment, logistics
+                if any(w in res_clean for w in ["debris", "clearance", "equipment", "suppl", "comm"]):
+                    demand_weights[k] = 3.0
+                else:
+                    demand_weights[k] = 1.5
+            else:
+                demand_weights[k] = 1.5
+
+        total_demand = sum(demand_weights.values()) or len(target_keys)
+
+        allocated_counts = {}
+        for i, k in enumerate(target_keys):
+            if i == len(target_keys) - 1:
+                # Last recipient gets exact remaining units to satisfy zero-sum constraint
+                allocated_counts[k] = max(0, remaining)
+            else:
+                priority_share = demand_weights[k] / total_demand
+                priority_qty = total_avail * priority_share
+
+                if has_valid_proposals and res_name in avg_proposals[k]:
+                    # Blend 60% priority-based demand with 40% agent counter-demand compromise
+                    compromise_qty = int(round(0.6 * priority_qty + 0.4 * avg_proposals[k][res_name]))
+                else:
+                    compromise_qty = int(round(priority_qty))
+
+                qty = max(0, min(remaining, compromise_qty))
+                allocated_counts[k] = qty
+                remaining -= qty
+
+        for k in target_keys:
+            balanced_allocation[k][res_name] = allocated_counts[k]
+
+    return balanced_allocation
+
+
+def generate_human_suggestion(
+    scenario: dict,
+    current_round: int,
+    max_rounds: int,
+    history: list = None,
+    last_proposals: dict = None,
+    current_proposal: dict = None,
+    resource_quantities: dict = None,
+    agents: list = None,
+) -> dict:
+    """
+    Acts as an AI Strategic Advisor to the Human Crisis Coordinator in Practice Mode.
+    Produces an in-character strategic move rigorously grounded in:
+      1. The preceding communication and objections raised by all AI agents.
+      2. The regional crisis priorities (severity, population, and specific sector needs).
+    """
+    history = history or []
+    last_proposals = last_proposals or {}
+    current_proposal = current_proposal or {}
+    scenario = scenario or {}
+
+    recipients = scenario.get("recipients", [])
+    if not recipients and current_proposal:
+        recipients = [{"name": name, "severity": "High"} for name in current_proposal.keys()]
+
+    res_quantities = resource_quantities or scenario.get("resourceQuantities", {})
+    available_resources = list(res_quantities.keys()) or scenario.get("resources", [])
+
+    # 1. Compute priority-aligned balanced compromise allocation
+    balanced_proposal = _generate_balanced_compromise_allocation(
+        recipients=recipients,
+        resource_quantities=res_quantities,
+        last_proposals=last_proposals,
+        current_proposal=current_proposal,
+        agents=agents,
+    )
+
+    # 2. Identify top critical region and primary resource
+    sorted_recipients = sorted(
+        recipients,
+        key=lambda r: (
+            3 if "crit" in str(r.get("severity", "")).lower() else
+            2 if "high" in str(r.get("severity", "")).lower() else
+            1 if "med" in str(r.get("severity", "")).lower() else 0,
+            float(r.get("population", 0)) if str(r.get("population", 0)).isdigit() else 0
+        ),
+        reverse=True
+    ) if recipients else []
+
+    top_district_obj = sorted_recipients[0] if sorted_recipients else {}
+    top_district_name = top_district_obj.get("name", "Critical Sector")
+    top_district_needs = top_district_obj.get("needs", [])
+    top_district_sev = top_district_obj.get("severity", "Critical")
+
+    # Match primary resource to top district's explicit need if possible
+    primary_resource = None
+    if top_district_needs:
+        for need in top_district_needs:
+            for avail in available_resources:
+                if need.lower() in avail.lower() or avail.lower() in need.lower():
+                    primary_resource = avail
+                    break
+            if primary_resource:
+                break
+
+    if not primary_resource:
+        primary_resource = available_resources[0] if available_resources else "Supplies"
+
+    # Identify highlighted amount for the primary resource in the top district
+    suggested_amount = 0
+    if top_district_name in balanced_proposal and primary_resource in balanced_proposal[top_district_name]:
+        suggested_amount = balanced_proposal[top_district_name][primary_resource]
+    else:
+        # If proposal is keyed by agent names, find the highest allocation for this resource
+        for entity_alloc in balanced_proposal.values():
+            if isinstance(entity_alloc, dict) and primary_resource in entity_alloc:
+                suggested_amount = max(suggested_amount, entity_alloc[primary_resource])
+
+    if suggested_amount == 0 and primary_resource in res_quantities:
+        suggested_amount = max(1, int(res_quantities[primary_resource] * 0.4))
+
+    # 3. Determine recommended action
+    if current_round >= max(2, max_rounds - 1) and current_proposal:
+        default_action = "Accept Offer"
+    elif current_proposal:
+        default_action = "Counter Offer"
+    else:
+        default_action = "Offer"
+
+    # 4. Extract and analyze recent agent communication
+    # Group turns to find the latest turn and objections for each agent
+    latest_agent_turns = {}
+    for turn in history:
+        agent_name = turn.get("agent", "")
+        if agent_name and agent_name != "Human Participant":
+            latest_agent_turns[agent_name] = turn
+
+    communication_lines = []
+    agent_objections = []
+    for agent_name, turn in latest_agent_turns.items():
+        act = turn.get("action", "")
+        msg = turn.get("message", "").strip()
+        # Keep up to 350 chars of the actual speech
+        msg_preview = (msg[:350] + "...") if len(msg) > 350 else msg
+        communication_lines.append(f"- {agent_name} [{act}]: \"{msg_preview}\"")
+        if act == "COUNTER" or "cannot" in msg.lower() or "reject" in msg.lower() or "need" in msg.lower():
+            agent_objections.append(f"{agent_name} voiced concern in their latest counter")
+
+    history_str = "\n".join(communication_lines) if communication_lines else "Round 1 opening: No prior agent statements recorded yet."
+
+    # 5. Format regional priorities and requirements
+    regional_priorities_lines = []
+    for r in sorted_recipients:
+        r_name = r.get("name", "Unknown")
+        r_sev = r.get("severity", "Medium")
+        r_pop = r.get("population", "N/A")
+        r_needs = ", ".join(r.get("needs", [])) or "General emergency aid"
+        regional_priorities_lines.append(
+            f"- {r_name} | Severity: {r_sev.upper()} | Population: {r_pop} | Priority Needs: [{r_needs}]"
+        )
+    regions_str = "\n".join(regional_priorities_lines) if regional_priorities_lines else "No specific recipient regions specified."
+
+    scenario_title = scenario.get("title", "Disaster Emergency Operation")
+
+    # 6. Build high-quality default heuristic fallback
+    secondary_district_name = sorted_recipients[1].get("name", "Central District") if len(sorted_recipients) > 1 else "other sectors"
+    secondary_needs_str = ", ".join(sorted_recipients[1].get("needs", ["vital resources"])) if len(sorted_recipients) > 1 else "emergency relief"
+
+    default_message = (
+        f"Government Agent, NGO Agent, and District Administration: looking at our communication and the emergency map, "
+        f"we must align our allocation strictly with regional urgency. Because {top_district_name} is under {top_district_sev} severity, "
+        f"they receive priority with {suggested_amount} units of {primary_resource}, while {secondary_district_name} is protected with "
+        f"dedicated {secondary_needs_str}. This resolves our deadlock and ensures every agency can operate effectively."
+    )
+    default_reasoning = (
+        f"Directly answers recent agent counter-arguments by prioritizing critical supplies for {top_district_name} "
+        f"({top_district_sev} severity) while guaranteeing adequate operational resources for {secondary_district_name}."
+    )
+
+    instruction = f"""
+You are the Lead Crisis Operations Strategist advising the Human Incident Commander in an Emergency Operations Center.
+The Human Commander is leading a high-stakes multi-agency negotiation for: {scenario_title}
+Participating Agencies:
+- Government Agent (National Emergency Authority: infrastructure safety, protocols, command order)
+- NGO Agent (Humanitarian Relief Network: urgent medical aid, displaced persons, shelters)
+- District Administration Agent (Municipal Emergency Office: local logistics, debris clearance, access routes)
+
+CURRENT ROUND: {current_round} / {max_rounds}
+AVAILABLE RESOURCE POOL (TOTAL ZERO-SUM BUDGET):
+{json.dumps(res_quantities, indent=2)}
+
+REGIONAL DISASTER PRIORITIES & SECTOR REQUIREMENTS:
+{regions_str}
+
+LATEST ROUNDTABLE COMMUNICATION (THE ACTUAL STATEMENTS & COUNTERS TO ADDRESS):
+{history_str}
+
+CURRENT ACTIVE PROPOSAL ON TABLE:
+{json.dumps(current_proposal) if current_proposal else "None yet"}
+
+RECOMMENDED ZERO-SUM COMPROMISE ALLOCATION (Strictly aligned with regional needs and previous communication):
+{json.dumps(balanced_proposal, indent=2)}
+
+YOUR MANDATE:
+1. STRICTLY RESPECT THE PRIOR COMMUNICATION:
+   - Your speech MUST directly address the Government Agent, NGO Agent, and District Administration Agent by name.
+   - You MUST acknowledge and answer the specific counter-points, objections, or demands raised in their latest statements above.
+2. STRICTLY RESPECT THE PRIORITIES OF EACH REGION:
+   - Your speech and allocation MUST reflect the real emergency priorities on the ground.
+   - Explicitly mention the affected sectors/regions (e.g. {top_district_name}, {secondary_district_name}) by name, citing their severity ({top_district_sev}) and urgent needs as the operational rationale.
+3. IN-CHARACTER VOICE:
+   - Speak as an authoritative, empathetic Incident Commander uniting the room to prevent disaster collapse.
+   - Keep speech to 2-4 impactful, natural sentences.
+
+Return ONLY valid JSON matching this exact structure:
+{{
+  "action": "{default_action}",
+  "resource": "{primary_resource}",
+  "amount": {suggested_amount},
+  "message": "Spoken dialogue addressing Government, NGO, and District by name, responding to their recent communication while justifying resource allocation based on regional priorities and severity.",
+  "reasoning": "1-2 sentence tactical explanation for the human commander showing how this move resolves agent friction and satisfies regional urgency.",
+  "proposal": {json.dumps(balanced_proposal)}
+}}
+"""
+
+    # 1. Try Groq
+    if _groq_clients:
+        for client in _groq_clients:
+            try:
+                response = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{"role": "user", "content": instruction}],
+                    response_format={"type": "json_object"},
+                )
+                text = (response.choices[0].message.content if response.choices else "") or ""
+                parsed = _extract_json(text)
+                if parsed and isinstance(parsed, dict) and parsed.get("message"):
+                    return {
+                        "action": parsed.get("action", default_action),
+                        "resource": parsed.get("resource", primary_resource),
+                        "amount": parsed.get("amount", suggested_amount),
+                        "message": parsed.get("message", default_message),
+                        "reasoning": parsed.get("reasoning", default_reasoning),
+                        "proposal": parsed.get("proposal", balanced_proposal),
+                    }
+            except Exception as e:
+                print(f"[SUGGESTION] Groq attempt failed: {e}")
+
+    # 2. Try Gemini
+    for client in _clients:
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=instruction,
+            )
+            text = getattr(response, "text", "") or ""
+            parsed = _extract_json(text)
+            if parsed and isinstance(parsed, dict) and parsed.get("message"):
+                return {
+                    "action": parsed.get("action", default_action),
+                    "resource": parsed.get("resource", primary_resource),
+                    "amount": parsed.get("amount", suggested_amount),
+                    "message": parsed.get("message", default_message),
+                    "reasoning": parsed.get("reasoning", default_reasoning),
+                    "proposal": parsed.get("proposal", balanced_proposal),
+                }
+        except Exception as e:
+            print(f"[SUGGESTION] Gemini attempt failed: {e}")
+
+    # Fallback to calculated heuristic
+    return {
+        "action": default_action,
+        "resource": primary_resource,
+        "amount": suggested_amount,
+        "message": default_message,
+        "reasoning": default_reasoning,
+        "proposal": balanced_proposal,
+    }
+
+
