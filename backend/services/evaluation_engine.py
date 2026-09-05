@@ -287,13 +287,29 @@ def generate_turn_evaluation(
     )
     resource_quantities = state.get("resource_quantities", {}) or {}
     proposal = _incoming_proposal(agent_name, state, incoming_proposal)
+    if not proposal and isinstance(new_proposal, dict) and new_proposal:
+        proposal = new_proposal
     known_resources = set(resource_quantities)
 
-    # Detailed proposals contain one allocation per configured agent. Evaluate
-    # only the current agent's allocation while consensus compares the whole map.
-    agent_allocation = proposal.get(agent_name, proposal) if isinstance(proposal, dict) else {}
-    if not isinstance(agent_allocation, dict):
-        agent_allocation = {}
+    # Preserve agent-specific allocations, but aggregate recipient allocations
+    # when the proposal is keyed by districts rather than agent names.
+    agent_allocation = {}
+    if isinstance(proposal, dict):
+        agent_specific_allocation = proposal.get(agent_name)
+        if isinstance(agent_specific_allocation, dict):
+            agent_allocation = agent_specific_allocation
+        elif proposal and all(
+            isinstance(allocation, dict)
+            for allocation in proposal.values()
+        ):
+            for allocation in proposal.values():
+                for resource, quantity in allocation.items():
+                    if isinstance(quantity, (int, float)) and not isinstance(quantity, bool):
+                        agent_allocation[resource] = (
+                            agent_allocation.get(resource, 0) + quantity
+                        )
+        else:
+            agent_allocation = proposal
 
     recipient_allocations = (
         list(proposal.values())
@@ -419,4 +435,251 @@ def generate_turn_evaluation(
         "explanation": decision_explanation,
         "trade_str": trade_str,
         "adjustments": adjustments,
+    }
+
+
+def _flatten_allocation(proposal):
+    totals = {}
+    if not isinstance(proposal, dict):
+        return totals
+
+    for resource, quantity in proposal.items():
+        if isinstance(quantity, dict):
+            for nested_resource, nested_quantity in _flatten_allocation(
+                quantity
+            ).items():
+                totals[nested_resource] = totals.get(nested_resource, 0) + nested_quantity
+        elif isinstance(quantity, (int, float)) and not isinstance(quantity, bool):
+            totals[resource] = totals.get(resource, 0) + quantity
+
+    return totals
+
+
+def _allocation_paths(proposal, prefix=""):
+    values = {}
+    if not isinstance(proposal, dict):
+        return values
+
+    for resource, quantity in proposal.items():
+        path = f"{prefix}/{resource}" if prefix else str(resource)
+        if isinstance(quantity, dict):
+            values.update(_allocation_paths(quantity, path))
+        elif isinstance(quantity, (int, float)) and not isinstance(quantity, bool):
+            values[path] = quantity
+
+    return values
+
+
+def _proposal_delta(previous, current):
+    previous_totals = _allocation_paths(previous)
+    current_totals = _allocation_paths(current)
+    increased = {}
+    decreased = {}
+
+    for resource in sorted(set(previous_totals) | set(current_totals)):
+        change = current_totals.get(resource, 0) - previous_totals.get(resource, 0)
+        if change > 0:
+            increased[resource] = change
+        elif change < 0:
+            decreased[resource] = abs(change)
+
+    return increased, decreased
+
+
+def _analysis_participants(state):
+    participants = [agent.get("name") for agent in state.get("agents", [])]
+    if any(
+        entry.get("agent") == "Human Participant"
+        for entry in state.get("history", [])
+    ):
+        participants.append("Human Participant")
+    return participants
+
+
+def _proposal_history_by_agent(state):
+    grouped = {}
+    for entry in state.get("history", []):
+        proposal = entry.get("parsed_proposal")
+        agent = entry.get("agent")
+        if agent and isinstance(proposal, dict) and proposal:
+            grouped.setdefault(agent, []).append({
+                "round": entry.get("round"),
+                "proposal": proposal,
+                "action": str(entry.get("action", "")).upper(),
+            })
+    return grouped
+
+
+def _concession_patterns(state, final_allocation, participants):
+    history_by_agent = _proposal_history_by_agent(state)
+    agreement_reached = bool(state.get("consensus_reached"))
+    accepted = state.get("accepted_proposals", {})
+    patterns = {}
+
+    for agent in participants:
+        entries = history_by_agent.get(agent, [])
+        increased = {}
+        decreased = {}
+        concession_count = 0
+        total_conceded = 0
+        first_concession = False
+        first_change_seen = False
+
+        for previous_entry, current_entry in zip(entries, entries[1:]):
+            current_increased, current_decreased = _proposal_delta(
+                previous_entry["proposal"],
+                current_entry["proposal"],
+            )
+            for resource, quantity in current_increased.items():
+                increased[resource] = increased.get(resource, 0) + quantity
+            for resource, quantity in current_decreased.items():
+                decreased[resource] = decreased.get(resource, 0) + quantity
+                concession_count += 1
+                total_conceded += quantity
+                if not first_change_seen:
+                    first_concession = True
+            if current_increased or current_decreased:
+                first_change_seen = True
+
+        last_proposal = entries[-1]["proposal"] if entries else None
+        contributed = bool(
+            agreement_reached
+            and total_conceded > 0
+            and (
+                accepted.get(agent) == final_allocation
+                or last_proposal == final_allocation
+            )
+        )
+
+        patterns[agent] = {
+            "increased": increased,
+            "decreased": decreased,
+            "concession_count": concession_count,
+            "total_quantity_conceded": total_conceded,
+            "made_first_concession": first_concession,
+            "contributed_to_final_agreement": contributed,
+        }
+
+    return patterns
+
+
+def _agent_performance(state, final_allocation, participants, concession_patterns):
+    history_by_agent = {}
+    for entry in state.get("history", []):
+        agent = entry.get("agent")
+        if agent:
+            history_by_agent.setdefault(agent, []).append(entry)
+
+    performance = {}
+    final_totals = _flatten_allocation(final_allocation)
+    agreement_reached = bool(state.get("consensus_reached"))
+    accepted = state.get("accepted_proposals", {})
+
+    for agent in participants:
+        entries = history_by_agent.get(agent, [])
+        action_counts = {
+            action: sum(
+                str(entry.get("action", "")).upper() == action
+                for entry in entries
+            )
+            for action in ("OFFER", "COUNTER", "ACCEPT", "REJECT")
+        }
+        scores = [
+            entry.get("evaluation", {}).get("satisfaction")
+            for entry in entries
+            if isinstance(entry.get("evaluation"), dict)
+            and isinstance(entry.get("evaluation", {}).get("satisfaction"), (int, float))
+        ]
+        proposals = [
+            entry.get("parsed_proposal")
+            for entry in entries
+            if isinstance(entry.get("parsed_proposal"), dict)
+            and entry.get("parsed_proposal")
+        ]
+        stable_comparisons = sum(
+            proposals[index] == proposals[index - 1]
+            for index in range(1, len(proposals))
+        )
+        comparison_count = max(0, len(proposals) - 1)
+        initial_proposal = proposals[0] if proposals else None
+        last_proposal = proposals[-1] if proposals else None
+        final_paths = _allocation_paths(final_allocation)
+        initial_paths = _allocation_paths(initial_proposal)
+        final_comparison = {
+            path: final_paths.get(path, 0) - initial_paths.get(path, 0)
+            for path in sorted(set(initial_paths) | set(final_paths))
+        }
+
+        total_turns = len(entries)
+        performance[agent] = {
+            "average_satisfaction": round(sum(scores) / len(scores), 2) if scores else 0.0,
+            "offers": action_counts["OFFER"],
+            "counters": action_counts["COUNTER"],
+            "accepts": action_counts["ACCEPT"],
+            "rejects": action_counts["REJECT"],
+            "acceptance_rate": round(
+                action_counts["ACCEPT"] / total_turns,
+                2,
+            ) if total_turns else 0.0,
+            "concession_count": concession_patterns[agent]["concession_count"],
+            "total_quantity_conceded": concession_patterns[agent]["total_quantity_conceded"],
+            "proposal_stability": round(
+                stable_comparisons / comparison_count,
+                2,
+            ) if comparison_count else 1.0,
+            "contribution_to_agreement": bool(
+                agreement_reached
+                and (
+                    accepted.get(agent) == final_allocation
+                    or last_proposal == final_allocation
+                )
+            ),
+            "initial_proposal": initial_proposal,
+            "final_allocation_comparison": {
+                "final_paths": final_paths,
+                "changes_from_initial": final_comparison,
+            },
+        }
+
+    return performance
+
+
+def build_outcome_analysis(state):
+    final_allocation = state.get("final_allocation")
+    participants = _analysis_participants(state)
+    accepted = state.get("accepted_proposals", {})
+    unanimous = bool(state.get("consensus_reached"))
+    accepted_participants = [
+        agent
+        for agent in participants
+        if accepted.get(agent) == final_allocation
+    ]
+    resource_totals = _flatten_allocation(final_allocation)
+    concession_patterns = _concession_patterns(
+        state,
+        final_allocation,
+        participants,
+    )
+
+    return {
+        "status": state.get("status", "ongoing"),
+        "outcome": "agreement_reached" if unanimous else "no_agreement",
+        "rounds": state.get("current_round", 1),
+        "agreement_terms": {
+            "final_allocation": final_allocation,
+            "per_resource_totals": resource_totals,
+            "agreement_round": state.get("current_round") if unanimous else None,
+            "accepted_participants": accepted_participants,
+            "total_participants": len(participants),
+            "unanimous_agreement": unanimous,
+            "outcome": state.get("status", "ongoing"),
+        },
+        "concession_patterns": concession_patterns,
+        "agent_performance": _agent_performance(
+            state,
+            final_allocation,
+            participants,
+            concession_patterns,
+        ),
+        "final_allocation": final_allocation,
     }

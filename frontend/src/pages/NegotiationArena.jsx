@@ -32,13 +32,13 @@ const AGENT_STYLES = {
   district: {
     bg: 'bg-amber-50',
     border: 'border-amber-200',
-    badge: 'bg-amber-600 text-white',
-    dot: 'bg-amber-500',
-    label: 'text-amber-800',
-    chip: 'bg-amber-100 text-amber-800',
-    headerBg: 'bg-amber-500',
+    badge: 'bg-purple-700 text-white',
+    dot: 'bg-purple-600',
+    label: 'text-purple-800',
+    chip: 'bg-purple-100 text-purple-800',
+    headerBg: 'bg-purple-600',
     headerText: 'text-white',
-    tagBg: 'bg-amber-100 text-amber-700',
+    tagBg: 'bg-purple-100 text-purple-700',
   },
   default: {
     bg: 'bg-slate-50',
@@ -54,9 +54,9 @@ const AGENT_STYLES = {
 };
 
 const ACTION_STYLES = {
-  OFFER: { cls: 'bg-sky-100 text-sky-800', label: 'PROPOSES' },
+  OFFER: { cls: 'bg-sky-100 text-sky-800', label: 'OFFER' },
   COUNTER: { cls: 'bg-amber-100 text-amber-800', label: 'COUNTER' },
-  REJECT: { cls: 'bg-rose-100 text-rose-800', label: 'OBJECTS' },
+  REJECT: { cls: 'bg-rose-100 text-rose-800', label: 'REJECT' },
   ACCEPT: { cls: 'bg-emerald-100 text-emerald-800', label: 'ACCEPTS' },
 };
 
@@ -69,16 +69,79 @@ const INITIAL_GEMINI_METRICS = {
   average_latency: 0,
 };
 
-function getAgentStyle(agentName) {
+const FALLBACK_AGENT_STYLES = [
+  AGENT_STYLES.government,
+  AGENT_STYLES.ngo,
+  {
+    bg: 'bg-violet-50',
+    border: 'border-violet-200',
+    badge: 'bg-violet-700 text-white',
+    dot: 'bg-violet-600',
+    label: 'text-violet-800',
+    chip: 'bg-violet-100 text-violet-800',
+    headerBg: 'bg-violet-600',
+    headerText: 'text-white',
+    tagBg: 'bg-violet-100 text-violet-700',
+  },
+];
+
+function getAgentStyle(agentName, agentIndex = 0) {
   const n = (agentName || '').toLowerCase();
   if (n.includes('government')) return AGENT_STYLES.government;
   if (n.includes('ngo')) return AGENT_STYLES.ngo;
   if (n.includes('district')) return AGENT_STYLES.district;
-  return AGENT_STYLES.default;
+  return FALLBACK_AGENT_STYLES[agentIndex % FALLBACK_AGENT_STYLES.length] || AGENT_STYLES.default;
 }
 
 function getActionStyle(action) {
   return ACTION_STYLES[(action || '').toUpperCase()] || { cls: 'bg-slate-100 text-slate-700', label: action || 'SPEAK' };
+}
+
+function flattenProposal(proposal, prefix = '') {
+  if (!proposal || typeof proposal !== 'object') return {};
+  return Object.entries(proposal).reduce((paths, [key, value]) => {
+    const path = prefix ? `${prefix}/${key}` : key;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return { ...paths, ...flattenProposal(value, path) };
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      paths[path] = value;
+    }
+    return paths;
+  }, {});
+}
+
+function getProposalChanges(currentProposal, previousProposal) {
+  const current = flattenProposal(currentProposal);
+  const previous = flattenProposal(previousProposal);
+  return Object.keys({ ...previous, ...current })
+    .sort()
+    .map((path) => ({
+      path,
+      from: previous[path] ?? 0,
+      to: current[path] ?? 0,
+      change: (current[path] ?? 0) - (previous[path] ?? 0),
+    }))
+    .filter((item) => item.change !== 0);
+}
+
+function getLatestAgentActions(history) {
+  return (history || []).reduce((latest, entry) => {
+    if (entry?.agent && entry?.action) latest[entry.agent] = entry.action.toUpperCase();
+    return latest;
+  }, {});
+}
+
+function displayValue(value) {
+  return value === null || value === undefined || value === ''
+    ? 'Not available'
+    : String(value);
+}
+
+function displayBoolean(value) {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return 'Not available';
 }
 
 // ─────────────────────────────────────────────
@@ -142,11 +205,14 @@ function splitMessage(message) {
 // ─────────────────────────────────────────────
 // Single transcript entry card
 // ─────────────────────────────────────────────
-function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
+function TranscriptEntry({ item, previousProposal, agentIndex }) {
   const [expanded, setExpanded] = useState(false);
-  const style = getAgentStyle(item.agent);
+  const style = getAgentStyle(item.agent, agentIndex);
   const actionStyle = getActionStyle(item.action);
   const hasProposal = item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0;
+  const changes = item.action?.toUpperCase() === 'COUNTER'
+    ? getProposalChanges(item.parsed_proposal, previousProposal)
+    : [];
 
   const roundLabel = item.round_label || `Round ${item.round} — ${item.agent || 'Agent'} responds`;
   const rawMessage = item.speech || item.message || '';
@@ -170,6 +236,11 @@ function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
           <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${actionStyle.cls}`}>
             {actionStyle.label}
           </span>
+          {item.stance && (
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/80">
+              {item.stance}
+            </span>
+          )}
         </div>
 
         {/* Narrative message — trimmed of raw allocation text */}
@@ -196,6 +267,22 @@ function TranscriptEntry({ item, maxRounds, isLast, consensusReached }) {
             <AllocationBreakdown proposal={item.parsed_proposal} style={style} />
           </div>
         )}
+
+        {changes.length > 0 && (
+          <div className="border-t border-slate-200/80 px-4 pb-3 pt-3">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              What Changed
+            </p>
+            <div className="grid gap-1 sm:grid-cols-2">
+              {changes.map(({ path, from, to, change }) => (
+                <div key={path} className={`rounded-lg px-2.5 py-1.5 text-xs ${change > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}`}>
+                  <span className="font-medium">{path}</span>
+                  <span className="ml-2 font-semibold">{from} → {to} {change > 0 ? `↑ +${change}` : `↓ ${change}`}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -216,6 +303,9 @@ function NegotiationArena() {
   const [totalAgents, setTotalAgents] = useState(0);
   const [negotiationEnded, setNegotiationEnded] = useState(false);
   const [finalAllocation, setFinalAllocation] = useState(null);
+  const [currentProposal, setCurrentProposal] = useState(null);
+  const [nextAgent, setNextAgent] = useState(null);
+  const [finalReport, setFinalReport] = useState(null);
   const [status, setStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -257,6 +347,9 @@ function NegotiationArena() {
     setTotalAgents(Number(state.total_agents ?? data?.total_agents ?? config?.agents?.length ?? 3));
     setNegotiationEnded(Boolean(state.negotiation_ended ?? data?.negotiation_ended));
     setFinalAllocation(state.final_allocation ?? data?.final_allocation ?? null);
+    setCurrentProposal(state.current_proposal ?? data?.current_proposal ?? null);
+    setNextAgent(state.next_agent ?? data?.next_agent ?? null);
+    setFinalReport(state.final_report ?? data?.final_report ?? null);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
     if (data?.gemini_metrics) setGeminiMetrics(data.gemini_metrics);
@@ -385,6 +478,25 @@ function NegotiationArena() {
         : 'Active';
 
   const progressPct = maxRounds > 0 ? Math.min(100, ((currentRound - 1) / maxRounds) * 100) : 0;
+  const outcomeAnalysis = finalReport?.outcome_analysis;
+  const latestActions = getLatestAgentActions(history);
+  const configuredAgents = config?.agents || [];
+  const participantNames = configuredAgents.map((agent) => agent.name).filter(Boolean);
+  const acceptedNames = participantNames.filter((name) => latestActions[name] === 'ACCEPT');
+  const proposalCount = history.filter((entry) => entry?.parsed_proposal && Object.keys(entry.parsed_proposal).length > 0).length;
+  const counterCount = history.filter((entry) => entry?.action?.toUpperCase() === 'COUNTER').length;
+  const groupedHistory = history.reduce((groups, entry, index) => {
+    const key = entry?.round ?? 1;
+    groups[key] = groups[key] || [];
+    groups[key].push({ entry, index });
+    return groups;
+  }, {});
+  const displayProposal = currentProposal || finalAllocation;
+  const proposalSource = history
+    .slice()
+    .reverse()
+    .find((entry) => entry?.parsed_proposal && Object.keys(entry.parsed_proposal).length > 0)
+    ?.agent;
 
   return (
     <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
@@ -398,6 +510,12 @@ function NegotiationArena() {
           <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
             Round {currentRound || 1} / {maxRounds}
           </span>
+          <span className={`rounded-full px-4 py-2 text-sm font-semibold ${consensusReached ? 'bg-emerald-100 text-emerald-800' : negotiationEnded ? 'bg-orange-100 text-orange-800' : 'bg-slate-100 text-slate-700'}`}>
+            {consensusReached ? '✓ Agreement reached' : negotiationEnded ? 'No consensus / deadlock' : 'Negotiation in progress'}
+          </span>
+          <span className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
+            Agents accepted {acceptedNames.length} / {totalAgents || participantNames.length}
+          </span>
           <span
             className={`rounded-full px-4 py-2 text-sm font-semibold ${loading
                 ? 'bg-amber-50 text-amber-700'
@@ -409,6 +527,11 @@ function NegotiationArena() {
             {statusLabel}
           </span>
         </div>
+        {nextAgent && !negotiationEnded && (
+          <p className="mt-3 text-sm font-medium text-slate-500">
+            Current speaker: <span className="font-semibold text-slate-700">{nextAgent}</span>
+          </p>
+        )}
         {/* Round progress bar */}
         <div className="mt-4 mx-auto max-w-sm h-1.5 rounded-full bg-slate-100 overflow-hidden">
           <div
@@ -460,7 +583,7 @@ function NegotiationArena() {
             <h2 className="text-base font-semibold">Controls</h2>
           </div>
           <div className="mt-3 text-sm text-slate-500">
-            Agents Agreed: <span className="font-semibold text-slate-700">{agreedAgents} / {totalAgents || 3}</span>
+            Agents Agreed: <span className="font-semibold text-slate-700">{agreedAgents} / {totalAgents || participantNames.length}</span>
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
             <button
@@ -522,14 +645,31 @@ function NegotiationArena() {
                   })}
                 </div>
               ) : (
-                history.map((item, i) => (
-                  <TranscriptEntry
-                    key={`${i}-${item.agent || ''}-${item.round}`}
-                    item={item}
-                    maxRounds={maxRounds}
-                    isLast={i === history.length - 1}
-                    consensusReached={consensusReached}
-                  />
+                Object.entries(groupedHistory).map(([roundNumber, entries]) => (
+                  <section key={roundNumber} className="space-y-4">
+                    <div className="flex items-center gap-3 pt-2">
+                      <span className="text-xs font-extrabold uppercase tracking-widest text-slate-500">
+                        Round {roundNumber}
+                      </span>
+                      <div className="h-px flex-1 bg-slate-200" />
+                    </div>
+                    {entries.map(({ entry: item, index }) => {
+                      const previousProposal = history
+                        .slice(0, index)
+                        .reverse()
+                        .find((candidate) => candidate?.parsed_proposal && Object.keys(candidate.parsed_proposal).length > 0)
+                        ?.parsed_proposal;
+                      const agentIndex = participantNames.indexOf(item.agent);
+                      return (
+                        <TranscriptEntry
+                          key={`${index}-${item.agent || ''}-${item.round}`}
+                          item={item}
+                          previousProposal={previousProposal}
+                          agentIndex={agentIndex < 0 ? 0 : agentIndex}
+                        />
+                      );
+                    })}
+                  </section>
                 ))
               )}
 
@@ -552,6 +692,73 @@ function NegotiationArena() {
 
         {/* ── Sidebar ── */}
         <div className="space-y-6">
+          {/* Negotiation progress */}
+          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Negotiation Progress</h3>
+            <div className="space-y-2 text-sm">
+              {[
+                ['Round', `${currentRound || 1} / ${maxRounds}`],
+                ['Agents Accepted', `${acceptedNames.length} / ${totalAgents || participantNames.length}`],
+                ['Proposals', proposalCount],
+                ['Counters', counterCount],
+                ['Agreement', consensusReached ? '✓ Reached' : negotiationEnded ? 'No consensus' : 'Pending'],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
+                  <span className="text-slate-500">{label}</span>
+                  <span className="font-semibold text-slate-800">{value}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-between rounded-xl bg-white px-3 py-3 shadow-sm">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Agents accepted</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">{acceptedNames.length} / {totalAgents || participantNames.length}</p>
+              </div>
+              <div className="flex gap-1.5" aria-label={`${acceptedNames.length} agents accepted`}>
+                {participantNames.map((name, index) => (
+                  <span key={name} className={`h-3 w-3 rounded-full ${latestActions[name] === 'ACCEPT' ? getAgentStyle(name, index).dot : 'bg-slate-200'}`} />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Agent status */}
+          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
+            <h3 className="text-base font-semibold text-slate-800 mb-4">Agent Status</h3>
+            <div className="space-y-2">
+              {participantNames.map((name, index) => {
+                const agentStyle = getAgentStyle(name, index);
+                const accepted = latestActions[name] === 'ACCEPT';
+                return (
+                  <div key={name} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+                    <span className="flex min-w-0 items-center gap-2 text-slate-700">
+                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${agentStyle.dot}`} />
+                      <span className="truncate">{name}</span>
+                    </span>
+                    <span className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${accepted ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {accepted ? '✓ Accepted' : latestActions[name] ? 'Negotiating' : 'Pending'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Current proposal */}
+          {displayProposal && Object.keys(displayProposal).length > 0 && (
+            <div className="rounded-[1.75rem] border border-blue-200 bg-blue-50/60 p-6">
+              <h3 className="text-base font-semibold uppercase tracking-wider text-blue-900">
+                Current Proposal
+              </h3>
+              <p className="mt-1 text-xs text-blue-700">
+                {consensusReached ? 'Final agreed allocation' : `Proposed by: ${proposalSource || 'Not available'}`}
+              </p>
+              <div className="mt-4">
+                <AllocationBreakdown proposal={displayProposal} style={AGENT_STYLES.default} />
+              </div>
+            </div>
+          )}
+
           {/* Resources */}
           <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
             <h3 className="text-base font-semibold text-slate-800 mb-4">Resources Available</h3>
@@ -576,7 +783,7 @@ function NegotiationArena() {
               {[
                 ['FastAPI Backend', 'Connected'],
                 ['Negotiation Orchestrator', sessionId ? 'Active' : 'Starting'],
-                ['Gemini AI', 'Enabled'],
+                ['LLM Provider', 'Configured'],
                 ['Evaluation Engine', 'Active'],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
@@ -611,16 +818,15 @@ function NegotiationArena() {
           <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
             <h3 className="text-base font-semibold text-slate-800 mb-4">Agent Legend</h3>
             <div className="space-y-2">
-              {[
-                { name: 'Government Agent', style: AGENT_STYLES.government },
-                { name: 'NGO Agent', style: AGENT_STYLES.ngo },
-                { name: 'District Administration', style: AGENT_STYLES.district },
-              ].map(({ name, style }) => (
-                <div key={name} className="flex items-center gap-2 text-sm">
-                  <span className={`w-3 h-3 rounded-full ${style.dot}`} />
-                  <span className="text-slate-600">{name}</span>
-                </div>
-              ))}
+              {participantNames.map((name, index) => {
+                const style = getAgentStyle(name, index);
+                return (
+                  <div key={name} className="flex items-center gap-2 text-sm">
+                    <span className={`w-3 h-3 rounded-full ${style.dot}`} />
+                    <span className="text-slate-600">{name}</span>
+                  </div>
+                );
+              })}
             </div>
             <div className="mt-4 space-y-1.5">
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Action types</p>
@@ -736,6 +942,169 @@ function NegotiationArena() {
               </div>
             </div>
           </div>
+
+          {outcomeAnalysis && (
+            <div className="mt-8 space-y-6">
+              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                  Outcome Summary
+                </h3>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {[
+                    ['Status', outcomeAnalysis.status],
+                    ['Outcome', outcomeAnalysis.outcome],
+                    ['Rounds used', outcomeAnalysis.rounds],
+                    ['Agreement round', outcomeAnalysis.agreement_terms?.agreement_round],
+                    ['Unanimous agreement', displayBoolean(outcomeAnalysis.agreement_terms?.unanimous_agreement)],
+                    ['Accepted participants', outcomeAnalysis.agreement_terms?.accepted_participants?.join(', ')],
+                    ['Total participants', outcomeAnalysis.agreement_terms?.total_participants],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        {label}
+                      </p>
+                      <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+                        {displayValue(value)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                  Agreement Terms
+                </h3>
+                <div className="mt-4 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
+                  <div>
+                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Final allocation
+                    </p>
+                    {outcomeAnalysis.agreement_terms?.final_allocation ? (
+                      <AllocationBreakdown
+                        proposal={outcomeAnalysis.agreement_terms.final_allocation}
+                        style={AGENT_STYLES.default}
+                      />
+                    ) : (
+                      <p className="text-sm text-slate-500">Not available</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Per-resource totals
+                    </p>
+                    <div className="space-y-2">
+                      {Object.entries(outcomeAnalysis.agreement_terms?.per_resource_totals || {}).length > 0 ? (
+                        Object.entries(outcomeAnalysis.agreement_terms.per_resource_totals).map(([resource, quantity]) => (
+                          <div key={resource} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                            <span className="text-slate-600">{resource}</span>
+                            <span className="font-semibold text-slate-800">{quantity}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-slate-500">Not available</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                  Concession Patterns
+                </h3>
+                <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                  {Object.entries(outcomeAnalysis.concession_patterns || {}).length > 0 ? (
+                    Object.entries(outcomeAnalysis.concession_patterns).map(([agentName, pattern]) => (
+                      <div key={agentName} className="rounded-xl bg-slate-50 p-4">
+                        <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                        <div className="mt-3 space-y-2 text-xs">
+                          <p className="font-semibold text-emerald-700">Increased</p>
+                          {Object.entries(pattern?.increased || {}).length > 0 ? (
+                            Object.entries(pattern.increased).map(([resource, quantity]) => (
+                              <p key={`increase-${resource}`} className="text-slate-600">{resource}: +{quantity}</p>
+                            ))
+                          ) : <p className="text-slate-400">Not available</p>}
+                          <p className="font-semibold text-rose-700">Decreased</p>
+                          {Object.entries(pattern?.decreased || {}).length > 0 ? (
+                            Object.entries(pattern.decreased).map(([resource, quantity]) => (
+                              <p key={`decrease-${resource}`} className="text-slate-600">{resource}: -{quantity}</p>
+                            ))
+                          ) : <p className="text-slate-400">Not available</p>}
+                          <p className="pt-2 text-slate-600">Concessions: <strong>{displayValue(pattern?.concession_count)}</strong></p>
+                          <p className="text-slate-600">Quantity conceded: <strong>{displayValue(pattern?.total_quantity_conceded)}</strong></p>
+                          <p className="text-slate-600">First concession: <strong>{displayBoolean(pattern?.made_first_concession)}</strong></p>
+                          <p className="text-slate-600">Contributed to agreement: <strong>{displayBoolean(pattern?.contributed_to_final_agreement)}</strong></p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-slate-500">Not available</p>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                  Per-Agent Performance
+                </h3>
+                <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                  {Object.entries(outcomeAnalysis.agent_performance || {}).length > 0 ? (
+                    Object.entries(outcomeAnalysis.agent_performance).map(([agentName, performance]) => (
+                      <div key={agentName} className="rounded-xl bg-slate-50 p-4">
+                        <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                          {[
+                            ['Avg satisfaction', performance?.average_satisfaction],
+                            ['Offers', performance?.offers],
+                            ['Counters', performance?.counters],
+                            ['Accepts', performance?.accepts],
+                            ['Rejects', performance?.rejects],
+                            ['Acceptance rate', performance?.acceptance_rate],
+                            ['Concessions', performance?.concession_count],
+                            ['Quantity conceded', performance?.total_quantity_conceded],
+                            ['Proposal stability', performance?.proposal_stability],
+                            ['Contribution', displayBoolean(performance?.contribution_to_agreement)],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-lg bg-white p-2">
+                              <p className="text-slate-400">{label}</p>
+                              <p className="mt-1 font-semibold text-slate-700">{displayValue(value)}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-4 border-t border-slate-200 pt-3 text-xs">
+                          <p className="font-semibold text-slate-600">Initial proposal</p>
+                          {performance?.initial_proposal ? (
+                            <AllocationBreakdown proposal={performance.initial_proposal} style={AGENT_STYLES.default} />
+                          ) : (
+                            <p className="mt-1 text-slate-400">Not available</p>
+                          )}
+                          <p className="mt-3 font-semibold text-slate-600">Final allocation comparison</p>
+                          {performance?.final_allocation_comparison ? (
+                            <div className="mt-2 space-y-1 text-slate-600">
+                              {Object.entries(performance.final_allocation_comparison.final_paths || {}).map(([path, quantity]) => (
+                                <p key={`final-${path}`}>{path}: {quantity}</p>
+                              ))}
+                              {Object.entries(performance.final_allocation_comparison.changes_from_initial || {}).map(([path, change]) => (
+                                <p key={`change-${path}`}>Change {path}: {change > 0 ? '+' : ''}{change}</p>
+                              ))}
+                              {Object.keys(performance.final_allocation_comparison.final_paths || {}).length === 0 && Object.keys(performance.final_allocation_comparison.changes_from_initial || {}).length === 0 && (
+                                <p className="text-slate-400">Not available</p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-slate-400">Not available</p>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-slate-500">Not available</p>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -75,6 +75,7 @@ class PracticeTurnRequest(BaseModel):
     resource: str = ""
     amount: int = 0
     action: str = "Offer"
+    proposal: dict | None = None
 
 
 # =========================================================
@@ -214,6 +215,7 @@ def practice_turn(body: PracticeTurnRequest):
             resource=body.resource,
             amount=body.amount,
             action=body.action,
+            proposal=body.proposal,
         )
 
         if not human_result.get("success"):

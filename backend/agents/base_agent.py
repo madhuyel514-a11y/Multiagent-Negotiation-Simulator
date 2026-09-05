@@ -23,6 +23,7 @@ class BaseAgent:
             prompt,
             max_rounds=context.get("max_rounds", 5),
             scenario=context.get("scenario", {}),
-            stubborn_until=context.get("stubborn_until")
+            stubborn_until=context.get("stubborn_until"),
+            practice_mode=context.get("practice_mode", False),
         )
         return result

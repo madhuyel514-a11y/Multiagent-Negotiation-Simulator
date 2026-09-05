@@ -8,7 +8,13 @@ from agents.ngo_agent import NGOAgent
 from agents.district_agent import DistrictAdministrationAgent
 
 from services.gemini_service import ask_model, get_gemini_metrics
-from services.evaluation_engine import calculate_consensus, detect_deadlock, generate_turn_evaluation, _resource_priority
+from services.evaluation_engine import (
+    calculate_consensus,
+    detect_deadlock,
+    generate_turn_evaluation,
+    _resource_priority,
+    build_outcome_analysis,
+)
 
 
 class NegotiationOrchestrator:
@@ -236,6 +242,7 @@ class NegotiationOrchestrator:
         resource: str = "",
         amount: int = 0,
         action: str = "Offer",
+        proposal: dict = None,
         **kwargs
     ) -> Dict[str, Any]:
 
@@ -284,7 +291,19 @@ class NegotiationOrchestrator:
         resource_quantities = state.get("resource_quantities", {})
         structured_proposal = {}
 
-        if resource and amount:
+        if normalized_action in ("OFFER", "COUNTER") and proposal is not None:
+            structured_proposal = self._validate_human_proposal(
+                proposal,
+                state.get("current_proposal", {}),
+                resource_quantities,
+            )
+            if structured_proposal is None:
+                return {
+                    "success": False,
+                    "message": "Invalid proposal: expected a complete nested allocation with valid resource quantities.",
+                }
+
+        if not structured_proposal and resource and amount:
             # Only build a real proposal when the resource is one the
             # scenario actually knows about (when quantities are configured).
             if not resource_quantities or resource in resource_quantities:
@@ -358,6 +377,52 @@ class NegotiationOrchestrator:
             "history": state["history"],
             "current_proposal": state.get("current_proposal", {}),
         }
+
+    def _validate_human_proposal(
+        self,
+        proposal,
+        current_proposal,
+        resource_quantities,
+    ):
+        if (
+            not isinstance(proposal, dict)
+            or not isinstance(current_proposal, dict)
+            or not current_proposal
+            or set(proposal) != set(current_proposal)
+        ):
+            return None
+
+        available_by_resource = {
+            str(resource).lower(): int(quantity)
+            for resource, quantity in resource_quantities.items()
+        }
+        validated = {}
+
+        for district, current_resources in current_proposal.items():
+            submitted_resources = proposal.get(district)
+            if (
+                not isinstance(current_resources, dict)
+                or not isinstance(submitted_resources, dict)
+                or set(submitted_resources) != set(current_resources)
+            ):
+                return None
+
+            validated[district] = {}
+            for resource in current_resources:
+                quantity = submitted_resources[resource]
+                resource_key = str(resource).lower()
+                if (
+                    resource_key not in available_by_resource
+                    or isinstance(quantity, bool)
+                    or not isinstance(quantity, (int, float))
+                    or int(quantity) != quantity
+                    or quantity < 0
+                    or quantity > available_by_resource[resource_key]
+                ):
+                    return None
+                validated[district][resource] = int(quantity)
+
+        return validated
 
     # =========================================================
     # ROLE DETECTION
@@ -747,6 +812,10 @@ class NegotiationOrchestrator:
         )
 
         agent = agents[index]
+        practice_mode = any(
+            item.get("agent") == "Human Participant"
+            for item in state.get("history", [])
+        )
 
         context = {
             "scenario": state["scenario"],
@@ -759,6 +828,7 @@ class NegotiationOrchestrator:
             "last_proposals": state.get("last_proposals", {}),
             "current_proposal": state.get("current_proposal", {}),
             "agents": state.get("agents", []),
+            "practice_mode": practice_mode,
 
             "agent": {
                 "id": agent.id,
@@ -1267,6 +1337,8 @@ class NegotiationOrchestrator:
         return f"I make the following opening offer: {proposal_text}."
 
     def _build_final_report(self, state):
+        outcome_analysis = build_outcome_analysis(state)
+
         if state.get("consensus_reached"):
             allocation = state.get("final_allocation") or {}
             lines = ["FINAL AGREED ALLOCATION"]
@@ -1283,6 +1355,7 @@ class NegotiationOrchestrator:
                 "status": "agreement_reached",
                 "consensus_reached": True,
                 "final_allocation": state.get("final_allocation"),
+                "outcome_analysis": outcome_analysis,
                 "message": "All agents accepted the same final allocation.\n" + "\n".join(lines)
             }
 
@@ -1307,9 +1380,10 @@ class NegotiationOrchestrator:
                 lines.append(f"{resource}: {quantity}")
 
         return {
-            "status": "deadlock_no_consensus",
+            "status": state.get("status", "deadlock_no_consensus"),
             "consensus_reached": False,
             "final_allocation": allocation,
+            "outcome_analysis": outcome_analysis,
             "message": "\n".join(lines)
         }
 

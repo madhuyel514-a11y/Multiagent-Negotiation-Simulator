@@ -775,6 +775,7 @@ async def ask_model(
     max_rounds=5,
     scenario=None,
     stubborn_until=None,
+    practice_mode=False,
 ):
     # Use provided agent_name if available, otherwise try to detect from prompt
     current_agent = agent_name.lower() if agent_name else _detect_agent(prompt)
@@ -899,6 +900,21 @@ async def ask_model(
 - Before Round {stubborn_target + 1}, you should be EXTREMELY STUBBORN and almost NEVER accept the first counter-proposal unless it perfectly meets your core objectives. Push back and demand better terms.
 - Only consider ACCEPTING easily in the final rounds (Round {max_rounds - 1} or {max_rounds}) to avoid a total failure to reach consensus."""
 
+    practice_mode_instruction = """
+=== HUMAN PRACTICE MODE ===
+- Evaluate the current human proposal against your objectives and constraints.
+- ACCEPT when the proposal is valid and reasonably satisfies your important requirements.
+- COUNTER only when a meaningful requirement is not satisfied.
+- Do not automatically counter because the proposal is not ideal.
+- Avoid unnecessary or repetitive counter-proposals.
+- As the round number increases, become more willing to compromise and reach agreement.
+""" if practice_mode else ""
+    practice_mode_section = (
+        f"\n{practice_mode_instruction}\n"
+        if practice_mode
+        else ""
+    )
+
     instruction = f"""
 You are a department head participating in a high-stakes, real-life DISASTER-RELIEF RESOURCE NEGOTIATION.
 You are sitting in a room with the other department heads. You must act entirely human and in-character.
@@ -927,7 +943,7 @@ Do NOT sound like an AI or a robot. Be professional but firm, and express frustr
 Evaluate the LATEST INCOMING PROPOSAL. Decide independently whether to ACCEPT, COUNTER, or REJECT it.
 If you COUNTER, include a concrete proposal and explain why the other departments must accept your concessions.
 
-{stubbornness_instruction}
+{stubbornness_instruction}{practice_mode_section}
 
 === CRITICAL RULES ===
 1. Speak NATURALLY as a human department head. Do NOT use boilerplate like "I counter-propose". Say things like "Look, we absolutely cannot accept this..." or "I understand your need, but my department..."
