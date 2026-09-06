@@ -842,16 +842,39 @@ class NegotiationOrchestrator:
             and str(raw_action or "").strip().upper() == "ACCEPT"
         ):
             parsed_proposal = {}
+
         else:
-            parsed_proposal = self._parse_proposals_from_message(
-                message,
-                state.get("resource_quantities", {}),
-                recipient_names,
-            )
-            parsed_proposal = self._normalize_fallback_proposal(
-                parsed_proposal,
-                incoming_proposal,
-            )
+            # ---------------------------------------------------------
+            # IMPORTANT:
+            # Use the structured offer returned by the LLM directly.
+            # Do NOT try to reconstruct it from the natural-language
+            # message.
+            # ---------------------------------------------------------
+
+            llm_offer = result.get("offer", {})
+
+            if (
+                isinstance(llm_offer, dict)
+                and llm_offer
+                and all(
+                    isinstance(value, dict)
+                    for value in llm_offer.values()
+                )
+            ):
+                parsed_proposal = llm_offer
+        
+            else:
+                # Legacy fallback for older responses.
+                parsed_proposal = self._parse_proposals_from_message(
+                    message,
+                    state.get("resource_quantities", {}),
+                    recipient_names,
+                )
+        
+                parsed_proposal = self._normalize_fallback_proposal(
+                    parsed_proposal,
+                    incoming_proposal,
+                )
 
         llm_message = message
 

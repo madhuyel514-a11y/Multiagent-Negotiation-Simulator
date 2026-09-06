@@ -570,6 +570,141 @@ def _validation_failure_reason(message, allowed_resources, resource_quantities):
 
     return "schema validation failure: missing or zero allocation"
 
+def _validate_structured_offer(
+    offer,
+    recipient_names,
+    resource_quantities,
+):
+    """
+    Validate the LLM's structured district-wise offer.
+
+    Expected shape:
+
+    {
+        "Riverbend District": {
+            "Food": 100,
+            "Medicine": 50
+        },
+        "Lakeside District": {
+            "Food": 120,
+            "Medicine": 40
+        },
+        "Hillside District": {
+            "Food": 80,
+            "Medicine": 60
+        }
+    }
+    """
+
+    if not isinstance(offer, dict):
+        return None
+
+    if not recipient_names:
+        return None
+
+    if not resource_quantities:
+        return None
+
+    # Normalize resource names for comparison
+    resource_lookup = {
+        str(name).strip().lower(): name
+        for name in resource_quantities
+    }
+
+    # Every district must exist
+    expected_districts = {
+        str(name).strip().lower(): name
+        for name in recipient_names
+    }
+
+    if set(str(key).strip().lower() for key in offer.keys()) != set(
+        expected_districts.keys()
+    ):
+        return None
+
+    validated = {}
+
+    for district_key, district_name in expected_districts.items():
+
+        # Find the actual key returned by the LLM
+        actual_district_key = next(
+            (
+                key
+                for key in offer.keys()
+                if str(key).strip().lower() == district_key
+            ),
+            None,
+        )
+
+        if actual_district_key is None:
+            return None
+
+        district_offer = offer[actual_district_key]
+
+        if not isinstance(district_offer, dict):
+            return None
+
+        # Every resource must exist
+        returned_resources = {
+            str(key).strip().lower()
+            for key in district_offer.keys()
+        }
+
+        if returned_resources != set(resource_lookup.keys()):
+            return None
+
+        validated[district_name] = {}
+
+        for resource_key, resource_name in resource_lookup.items():
+
+            actual_resource_key = next(
+                (
+                    key
+                    for key in district_offer.keys()
+                    if str(key).strip().lower() == resource_key
+                ),
+                None,
+            )
+
+            if actual_resource_key is None:
+                return None
+
+            quantity = district_offer[actual_resource_key]
+
+            # Reject booleans because bool is technically an int in Python
+            if isinstance(quantity, bool):
+                return None
+
+            if not isinstance(quantity, (int, float)):
+                return None
+
+            if int(quantity) != quantity:
+                return None
+
+            quantity = int(quantity)
+
+            if quantity < 0:
+                return None
+
+            validated[district_name][resource_name] = quantity
+
+    # Check resource totals across districts
+    # They must never exceed what is available.
+    for resource_name, available in resource_quantities.items():
+
+        total = sum(
+            validated[district][resource_name]
+            for district in validated
+        )
+
+        if total > int(available):
+            print(
+                f"STRUCTURED OFFER INVALID: "
+                f"{resource_name} total={total}, available={available}"
+            )
+            return None
+
+    return validated
 
 def _process_provider_response(
     text,
@@ -577,17 +712,51 @@ def _process_provider_response(
     resource_quantities,
     scenario,
 ):
+    """
+    Parse and validate the LLM response.
+
+    The structured `offer` field is the source of truth.
+    Natural-language message parsing is NOT used for valid offers.
+    """
+
     result = _extract_json(text)
+
     if not result or not isinstance(result, dict):
         return None, "invalid JSON"
 
-    action = str(result.get("action", "COUNTER")).strip().upper()
-    if action not in {"OFFER", "REJECT", "COUNTER", "ACCEPT"}:
+    action = str(
+        result.get("action", "COUNTER")
+    ).strip().upper()
+
+    if action not in {
+        "OFFER",
+        "REJECT",
+        "COUNTER",
+        "ACCEPT",
+    }:
         return None, f"invalid action: {action}"
 
-    message = str(result.get("message", "")).strip()
-    reasoning = str(result.get("reasoning", "")).strip()
-    stance = str(result.get("stance", "moderate")).strip()
+    message = str(
+        result.get("message", "")
+    ).strip()
+
+    reasoning = str(
+        result.get("reasoning", "")
+    ).strip()
+
+    stance = str(
+        result.get("stance", "moderate")
+    ).strip()
+
+    recipient_names = [
+        recipient.get("name")
+        for recipient in (scenario or {}).get("recipients", [])
+        if recipient.get("name")
+    ]
+
+    # ---------------------------------------------------------
+    # ACCEPT
+    # ---------------------------------------------------------
 
     if action == "ACCEPT":
         return {
@@ -595,26 +764,28 @@ def _process_provider_response(
             "message": message,
             "reasoning": reasoning,
             "stance": stance,
+            "offer": {},
         }, None
+
+    # ---------------------------------------------------------
+    # Every other negotiation action needs an offer
+    # ---------------------------------------------------------
 
     if not message:
         return None, "schema validation failure: missing message"
 
-    recipient_names = [
-        recipient.get("name")
-        for recipient in (scenario or {}).get("recipients", [])
-        if recipient.get("name")
-    ]
-    if not _validate_response_resources(
-        message,
-        allowed_resources,
-        resource_quantities,
-        recipient_names,
-    ):
-        return None, _validation_failure_reason(
-            message,
-            allowed_resources,
-            resource_quantities,
+    offer = result.get("offer")
+
+    validated_offer = _validate_structured_offer(
+        offer=offer,
+        recipient_names=recipient_names,
+        resource_quantities=resource_quantities,
+    )
+
+    if validated_offer is None:
+        return None, (
+            "schema validation failure: "
+            "offer must contain every district and every resource"
         )
 
     return {
@@ -622,8 +793,8 @@ def _process_provider_response(
         "message": message,
         "reasoning": reasoning,
         "stance": stance,
+        "offer": validated_offer,
     }, None
-
 
 # =========================================================
 # ROLE-SPECIFIC FALLBACK WITH REALISTIC CONFLICT POSITIONS
@@ -737,25 +908,58 @@ def _fallback_response(prompt, allowed_resources=None, agent_name=None,
     }
 
 
-def _generic_fallback_response(allowed_resources, resource_quantities, last_proposals, reason):
-    """Return a scenario-safe response when no Gemini client is configured."""
-    print(f"[FALLBACK] reason={reason}")
-    proposal_parts = []
-    for resource in allowed_resources or []:
-        available = int(resource_quantities.get(resource.lower(), 0))
-        quantity = min(available, max(1, round(available / 3))) if available else 0
-        proposal_parts.append(f"{resource}: {quantity} units")
+def _generic_fallback_response(
+    allowed_resources,
+    resource_quantities,
+    last_proposals,
+    reason,
+    recipient_names=None,
+):
+    """
+    Guaranteed fallback that still follows the district-wise
+    structured proposal schema.
+    """
 
-    proposal = "; ".join(proposal_parts)
+    print(f"[FALLBACK] reason={reason}")
+
+    recipient_names = recipient_names or []
+
+    offer = {}
+
+    # Create an equal starting allocation for every district.
+    for district in recipient_names:
+        offer[district] = {}
+
+        for resource in allowed_resources or []:
+            available = int(
+                resource_quantities.get(
+                    resource.lower(),
+                    0
+                )
+            )
+
+            # Equal split across districts.
+            if recipient_names:
+                quantity = available // len(recipient_names)
+            else:
+                quantity = 0
+
+            offer[district][resource] = quantity
+
     action = "COUNTER" if last_proposals else "OFFER"
+
     return {
         "message": (
-            f"I have reviewed the current negotiation context. "
-            f"My {action.lower()} is: {proposal}."
+            "I have reviewed the current negotiation context "
+            "and propose a balanced district-wise allocation."
         ),
-        "reasoning": "Fallback response uses only the resources and quantities supplied by the scenario.",
+        "reasoning": (
+            "Fallback response uses the scenario resources "
+            "and distributes them across the configured districts."
+        ),
         "stance": "moderate",
         "action": action,
+        "offer": offer,
     }
 
 
@@ -845,6 +1049,7 @@ async def ask_model(
             resource_quantities,
             last_proposals,
             "no client/API key",
+            recipient_names,
         )
 
     # -----------------------------------------------------
@@ -937,9 +1142,12 @@ If you COUNTER, include a concrete proposal and explain why the other department
 5. Reference specific numbers from the incoming proposal and explain why they don't work for you.
 6. Use only the resource names defined in the current scenario; never invent resources.
 7. An ACCEPT response must accept the incoming proposal without changing the numbers.
-8. For an OFFER or COUNTER, provide the complete allocation for EVERY RECIPIENT/AREA (not yourself). Use these exact allocation sections at the bottom of your message:
-{allocation_format}
-9. The sum of each resource across all recipient sections must equal its available quantity exactly.
+8. For an OFFER or COUNTER, provide the complete allocation for EVERY RECIPIENT/AREA inside the JSON "offer" object.
+9. The "offer" object MUST contain every recipient/district and every resource.
+10. Do NOT put the allocation only inside the message text.
+11. Do NOT return a flat resource summary such as "Food: 33 units; Medicine: 17 units".
+12. Every quantity must be a whole number and must be >= 0.
+13. The sum of each resource across all districts must NOT exceed the available quantity.
 
 Return ONLY valid JSON:
 
@@ -1076,4 +1284,5 @@ Return ONLY valid JSON:
         resource_quantities,
         last_proposals,
         last_failure,
+        recipient_names,
     )

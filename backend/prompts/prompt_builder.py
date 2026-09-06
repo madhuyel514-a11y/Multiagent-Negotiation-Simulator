@@ -92,10 +92,14 @@ def build_prompt(
     """
     Builds the LLM prompt for a single agent to speak naturally in its own voice.
 
-    CRITICAL: Each agent proposes only THEIR OWN resource allocation — what THEY
-    need for their own operations. They do NOT speak for or allocate resources to
-    other agents. Real negotiation happens through each agent defending their own
+    Build the negotiation prompt for an agent.
+
+    The agent may advocate for its own priorities, but every OFFER or COUNTER
+    must contain the complete district-wise allocation in the structured
+    JSON "offer" object. Real negotiation happens through each agent defending their own
     position, referencing what others have asked for, and making trade-offs.
+
+
     """
 
     resources_formatted, allowed_resources = _format_resources(resources)
@@ -224,7 +228,9 @@ INSTRUCTIONS FOR YOUR NEXT DECISION:
 
 You are speaking as {persona['name']} in this negotiation. You speak ONLY for yourself.
 
-FUNDAMENTAL RULE: You ONLY propose what YOUR operations need. You do NOT dictate what
+FUNDAMENTAL RULE: You advocate for YOUR operations and priorities, but your structured
+"offer" must contain the complete allocation for every district and
+every resource so the orchestrator can evaluate the full proposal. You do NOT dictate what
 other agents should receive. The other agents speak for themselves.
 
 You MUST:
@@ -238,7 +244,7 @@ You MUST:
 8. Include concrete numerical quantities and never exceed available amounts.
 
 You MUST NOT:
-1. Propose allocations for OTHER agents — they speak for themselves
+1. Propose allocations for OTHER agents — they speak for themselves,  However, the structured "offer" MUST contain the complete allocation for every district.
 2. Say "I propose Government gets X, NGO gets Y, District gets Z" — this is WRONG
 3. Simply "appreciate" every proposal without disagreement
 4. Propose identical numbers to the previous round without justification
