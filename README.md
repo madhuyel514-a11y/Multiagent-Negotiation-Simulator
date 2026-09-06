@@ -49,39 +49,69 @@ Human -> Government AI -> NGO AI -> District AI -> Human Decision
 
 ### 5. Deadlock and Breakdown Handling
 
-The system keeps separate deadlock rules for the two negotiation structures.
+The system uses different deadlock rules for **AI-vs-AI** and **Human-vs-AI Practice Mode** because the two negotiation flows work differently.
 
 #### AI-vs-AI Mode
-- The existing `detect_deadlock()` logic is preserved.
-- It can detect repeated identical messages, repeated unchanged `COUNTER` allocations, and negotiations with negligible numerical movement.
-- Existing mediation/resolution behavior is unchanged.
-- Maximum-round handling remains unchanged.
 
-#### Human vs AI Practice Mode
-- Practice Mode does **not** use the AI-vs-AI deadlock detector.
-- After each completed AI deliberation round, the orchestrator builds a comparable allocation snapshot.
-- A Practice Mode deadlock is declared only when the allocation state is unchanged across two consecutive completed rounds for all four participants:
-  - Human Participant
-  - Government Agent
-  - NGO Agent
-  - District Administration Agent
-- For the Human Participant, an `OFFER`/`COUNTER` uses the submitted proposal; an `ACCEPT`/`REJECT` uses the proposal being evaluated.
-- If any participant changes their allocation, the Practice Mode deadlock condition does not trigger.
-- The new Practice Mode condition does not invoke the existing AI-vs-AI mediation path.
-- The existing final-round behavior is preserved: when the configured maximum round is reached, Practice Mode still enters its existing final-decision flow.
+In AI-vs-AI negotiations, a deadlock is detected when the negotiation stops making meaningful progress. The system checks for situations such as:
 
-#### Other Existing Breakdown Conditions
-- Human Rejection of Final Proposal:
-  - The human can reject the final AI-generated distribution, terminating the session without an agreement.
-- Lack of Unanimous Agreement:
-  - Practice Mode requires unanimous alignment across all four participants for consensus.
-- Exhaustion of Maximum Rounds:
-  - Governed by the orchestrator's `max_rounds` setting.
-  - Practice Mode continues to use its existing final-decision behavior on the final configured round.
-- Infeasible Resource Constraints:
-  - If a proposed allocation exceeds available resource inventories, validation prevents an invalid agreement from being recorded.
+* Agents repeatedly sending the same messages.
+* Agents repeatedly making counter-proposals without changing their allocations.
+* Resource allocations changing by only a negligible amount over multiple rounds.
 
-Summary: AI-vs-AI and Human-vs-AI Practice Mode use different deadlock semantics because their interaction models are different. AI-vs-AI retains its existing stall/mediation logic, while Practice Mode detects a stall only when the complete four-participant allocation state remains unchanged across consecutive completed rounds.
+When a deadlock is detected, the existing mediation and resolution process is used. The negotiation can continue through the configured resolution process or end according to the existing maximum-round rules.
+
+#### Human-vs-AI Practice Mode
+
+Practice Mode uses a separate and simpler deadlock rule.
+
+After each complete round of negotiation, the system records the allocation proposed or evaluated by each participant:
+
+* Human Participant
+* Government Agent
+* NGO Agent
+* District Administration Agent
+
+The system then compares the current round with the previous completed round.
+
+A **deadlock is declared only when all four participants have exactly the same allocation in both rounds**.
+
+For example:
+
+```text
+Previous Round
+Human:       same allocation
+Government:  same allocation
+NGO:         same allocation
+District:    same allocation
+
+Current Round
+Human:       same allocation
+Government:  same allocation
+NGO:         same allocation
+District:    same allocation
+
+→ Deadlock detected
+```
+
+If **even one participant changes their allocation**, the negotiation is considered to have made progress and the deadlock condition is not triggered.
+
+The Human Participant's allocation is taken from their submitted proposal when they make an offer or counter-proposal. If they accept or reject an AI proposal, the allocation being evaluated is used for the comparison.
+
+Practice Mode deadlock does not use the AI-vs-AI deadlock detector or its mediation process. When this condition is reached, the negotiation is marked as stalled without consensus.
+
+The normal maximum-round and final-decision flow remains unchanged. If the negotiation reaches the configured maximum number of rounds, Practice Mode follows its existing final-decision process.
+
+#### Consensus and Other End Conditions
+
+A negotiation can also end when:
+
+* All participants reach the required agreement and a consensus is reached.
+* The human rejects the final proposal.
+* The maximum number of rounds is reached.
+* A proposed allocation violates the available resource constraints.
+
+This keeps the deadlock logic predictable: **AI-vs-AI detects a lack of meaningful progress, while Practice Mode detects whether the complete four-party allocation has remained unchanged between consecutive rounds.**
 
 ### 6. User Interface Redesign
 - Redesigned the Practice Mode interface to accommodate a 4-party roundtable (Human + 3 AI agents).
