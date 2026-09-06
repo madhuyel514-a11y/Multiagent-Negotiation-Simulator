@@ -805,11 +805,12 @@ function PracticeMode() {
       setDeliberatingAgent(null);
       setStatus('AI agency heads (Government, NGO, District) are deliberating...');
 
+      const isAcceptAction = selectedAction === 'Accept' || selectedAction === 'Accept Offer';
       const payload = {
         session_id: sessionId,
         message: humanMessage,
-        resource: resource,
-        amount: amount ? Number(amount) : 0,
+        resource: isAcceptAction ? '' : resource,
+        amount: isAcceptAction ? 0 : (amount ? Number(amount) : 0),
         action: selectedAction,
         ...(currentProposal && Object.keys(currentProposal).length > 0
           ? { proposal: currentProposal }
@@ -2431,11 +2432,29 @@ function PracticeMode() {
         }
 
         // 2. Agreed or final allocation
-        const agreedAllocation =
-          finalAllocation ||
-          (consensusReached ? currentProposal : null) ||
-          currentProposal ||
-          {};
+        // Pick the complete nested proposal across all sectors
+        let agreedAllocation = {};
+        if (isNestedAllocation(finalAllocation)) {
+          agreedAllocation = finalAllocation;
+        } else if (isNestedAllocation(currentProposal)) {
+          agreedAllocation = currentProposal;
+        } else if (
+          finalReport?.outcome_analysis?.agreement_terms?.final_allocation &&
+          isNestedAllocation(finalReport.outcome_analysis.agreement_terms.final_allocation)
+        ) {
+          agreedAllocation = finalReport.outcome_analysis.agreement_terms.final_allocation;
+        } else {
+          const lastNestedMsg = [...messages]
+            .reverse()
+            .find((m) => isNestedAllocation(m?.proposal));
+          if (lastNestedMsg?.proposal) {
+            agreedAllocation = lastNestedMsg.proposal;
+          } else if (finalAllocation && Object.keys(finalAllocation).length > 0) {
+            agreedAllocation = finalAllocation;
+          } else {
+            agreedAllocation = currentProposal || {};
+          }
+        }
 
         // 3. Baseline opening proposal to compare against
         const baselineOpeningProposal =

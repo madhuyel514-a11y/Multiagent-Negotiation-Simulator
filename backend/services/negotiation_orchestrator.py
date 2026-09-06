@@ -123,10 +123,12 @@ class NegotiationOrchestrator:
             )
         )
 
-        # Extract resource quantities from config or scenario
+        # Extract resource quantities from config or scenario (supporting both camelCase and snake_case)
         resource_quantities = (
             config.get("resourceQuantities")
+            or config.get("resource_quantities")
             or scenario.get("resourceQuantities")
+            or scenario.get("resource_quantities")
             or {}
         )
 
@@ -295,21 +297,27 @@ class NegotiationOrchestrator:
         resource_quantities = state.get("resource_quantities", {})
         structured_proposal = {}
 
-        if normalized_action in ("OFFER", "COUNTER") and proposal is not None:
-            structured_proposal = self._validate_human_proposal(
+        if proposal is not None and isinstance(proposal, dict) and bool(proposal):
+            validated_p = self._validate_human_proposal(
                 proposal,
                 state.get("current_proposal", {}),
                 resource_quantities,
             )
-            if structured_proposal is None:
+            if validated_p:
+                structured_proposal = validated_p
+            elif normalized_action in ("OFFER", "COUNTER"):
                 return {
                     "success": False,
                     "message": "Invalid proposal: expected a complete nested allocation with valid resource quantities.",
                 }
 
-        if not structured_proposal and resource and amount:
-            # Only build a real proposal when the resource is one the
-            # scenario actually knows about (when quantities are configured).
+        # Check if the active proposal / scenario is nested across districts/regions
+        has_nested_proposal = any(
+            isinstance(v, dict) for v in state.get("current_proposal", {}).values()
+        ) or bool(state.get("scenario", {}).get("regions"))
+
+        if not structured_proposal and resource and amount and normalized_action in ("OFFER", "COUNTER") and not has_nested_proposal:
+            # Only build a flat proposal when the scenario does not use nested districts/regions
             if not resource_quantities or resource in resource_quantities:
                 structured_proposal = {resource: int(amount)}
 
@@ -320,12 +328,12 @@ class NegotiationOrchestrator:
                 f"Action: {action}"
             )
 
-        if resource:
+        if resource and not has_nested_proposal:
             proposal_parts.append(
                 f"Resource: {resource}"
             )
 
-        if amount:
+        if amount and not has_nested_proposal:
             proposal_parts.append(
                 f"Amount: {amount}"
             )
@@ -368,12 +376,20 @@ class NegotiationOrchestrator:
                     print(f"[CONSENSUS] preserving prior acceptance for {ag_name}")
             state["accepted_proposals"] = preserved
 
-        elif normalized_action == "ACCEPT" and state.get("current_proposal"):
-            target_prop = dict(structured_proposal) if structured_proposal else dict(state["current_proposal"])
-            state["last_proposals"]["Human Participant"] = dict(target_prop)
-            state["current_proposal"] = dict(target_prop)
-            state["accepted_proposals"]["Human Participant"] = dict(target_prop)
-            print("[CONSENSUS] human accepted current proposal: Human Participant")
+        elif normalized_action == "ACCEPT":
+            # Acceptance must lock in the full multi-sector proposal
+            if structured_proposal and any(isinstance(v, dict) for v in structured_proposal.values()):
+                target_prop = dict(structured_proposal)
+            elif state.get("current_proposal") and any(isinstance(v, dict) for v in state["current_proposal"].values()):
+                target_prop = dict(state["current_proposal"])
+            else:
+                target_prop = dict(state.get("current_proposal", {}))
+
+            if target_prop:
+                state["last_proposals"]["Human Participant"] = dict(target_prop)
+                state["current_proposal"] = dict(target_prop)
+                state["accepted_proposals"]["Human Participant"] = dict(target_prop)
+                print("[CONSENSUS] human accepted current proposal: Human Participant")
 
         # -----------------------------------------------------
         # UNANIMOUS CONSENSUS CHECK ACROSS ALL 4 PARTICIPANTS
@@ -457,13 +473,14 @@ class NegotiationOrchestrator:
 
             for resource, quantity in submitted_resources.items():
                 res_key = str(resource).strip().lower()
-                if res_key not in available_by_resource:
-                    # Skip or ignore unknown resources, or validate if in available
+                if available_by_resource and res_key not in available_by_resource:
                     continue
                 if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
                     return None
                 val = int(quantity)
-                if val < 0 or val > available_by_resource[res_key]:
+                if val < 0:
+                    return None
+                if available_by_resource and res_key in available_by_resource and val > available_by_resource[res_key]:
                     return None
                 canonical_res_name = resource_casing.get(res_key, str(resource))
                 validated[district_key][canonical_res_name] = val
@@ -1448,7 +1465,24 @@ class NegotiationOrchestrator:
             state["consensus_reached"] = True
             state["negotiation_ended"] = True
             state["status"] = "agreement_reached"
-            state["final_allocation"] = dict(state.get("current_proposal", {})) if state.get("current_proposal") else None
+
+            curr_prop = state.get("current_proposal", {})
+            if curr_prop and any(isinstance(v, dict) for v in curr_prop.values()):
+                state["final_allocation"] = dict(curr_prop)
+            else:
+                found = None
+                for p in reversed(list(state.get("last_proposals", {}).values())):
+                    if p and any(isinstance(v, dict) for v in p.values()):
+                        found = dict(p)
+                        break
+                if not found:
+                    for h in reversed(state.get("history", [])):
+                        prop = h.get("parsed_proposal") or h.get("incoming_proposal")
+                        if prop and any(isinstance(v, dict) for v in prop.values()):
+                            found = dict(prop)
+                            break
+                state["final_allocation"] = found if found else (dict(curr_prop) if curr_prop else None)
+
             state["final_report"] = self._build_final_report(state)
             state["awaiting_final_decision"] = False
             state["history"].append({
@@ -1465,6 +1499,24 @@ class NegotiationOrchestrator:
             state["consensus_reached"] = False
             state["negotiation_ended"] = True
             state["status"] = "negotiation_breakdown"
+
+            curr_prop = state.get("current_proposal", {})
+            if curr_prop and any(isinstance(v, dict) for v in curr_prop.values()):
+                state["final_allocation"] = dict(curr_prop)
+            else:
+                found = None
+                for p in reversed(list(state.get("last_proposals", {}).values())):
+                    if p and any(isinstance(v, dict) for v in p.values()):
+                        found = dict(p)
+                        break
+                if not found:
+                    for h in reversed(state.get("history", [])):
+                        prop = h.get("parsed_proposal") or h.get("incoming_proposal")
+                        if prop and any(isinstance(v, dict) for v in prop.values()):
+                            found = dict(prop)
+                            break
+                state["final_allocation"] = found if found else (dict(curr_prop) if curr_prop else None)
+
             state["final_report"] = self._build_final_report(state)
             state["awaiting_final_decision"] = False
             state["history"].append({
@@ -1474,7 +1526,7 @@ class NegotiationOrchestrator:
                 "stance": "reject",
                 "round": state["current_round"],
                 "action": "REJECT",
-                "parsed_proposal": state.get("current_proposal", {}),
+                "parsed_proposal": state.get("final_allocation", {}),
             })
             print("[PRACTICE] Human rejected proposal on final decision.")
         elif normalized == "reset":
@@ -1667,6 +1719,18 @@ class NegotiationOrchestrator:
         return f"I make the following opening offer: {proposal_text}."
 
     def _build_final_report(self, state):
+        # Ensure final_allocation is complete nested multi-district allocation
+        allocation = state.get("final_allocation")
+        if not allocation or not any(isinstance(v, dict) for v in allocation.values()):
+            curr = state.get("current_proposal", {})
+            if curr and any(isinstance(v, dict) for v in curr.values()):
+                state["final_allocation"] = dict(curr)
+            else:
+                for p in reversed(list(state.get("last_proposals", {}).values())):
+                    if p and any(isinstance(v, dict) for v in p.values()):
+                        state["final_allocation"] = dict(p)
+                        break
+
         outcome_analysis = build_outcome_analysis(state)
 
         if state.get("consensus_reached"):
