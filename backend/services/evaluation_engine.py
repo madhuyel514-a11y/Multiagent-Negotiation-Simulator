@@ -116,6 +116,44 @@ def calculate_consensus(state: Dict[str, Any]) -> float:
     return 0.5
 
 
+def detect_practice_deadlock(
+    previous_round: Dict[str, Any],
+    current_round: Dict[str, Any],
+    participant_names=None,
+) -> bool:
+    """
+    Detect a Practice Mode stall by comparing two consecutive completed
+    negotiation rounds.
+
+    Unlike the existing AI-vs-AI detect_deadlock() logic, Practice Mode
+    does not use message similarity, COUNTER-only checks, or numerical
+    movement thresholds. A Practice Mode deadlock occurs only when the
+    comparable allocation/decision state for every required participant
+    is unchanged between two consecutive completed rounds.
+
+    participant_names should contain the configured AI participant names.
+    The Human Participant is always included automatically.
+    """
+    if not isinstance(previous_round, dict) or not isinstance(current_round, dict):
+        return False
+
+    if not previous_round or not current_round:
+        return False
+
+    ai_names = list(participant_names or [])
+    required_names = ["Human Participant", *ai_names]
+
+    # A missing participant must never be treated as "unchanged".
+    for name in required_names:
+        if name not in previous_round or name not in current_round:
+            return False
+
+        if previous_round[name] != current_round[name]:
+            return False
+
+    return True
+
+
 def detect_deadlock(
     state: Dict[str, Any],
     max_rounds: int = 10

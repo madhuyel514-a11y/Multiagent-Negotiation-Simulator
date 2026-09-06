@@ -48,25 +48,40 @@ Human -> Government AI -> NGO AI -> District AI -> Human Decision
 - Integrated an automated Tactical Advisor that provides AI-generated suggestions to assist the human in formulating balanced counter-proposals.
 
 ### 5. Deadlock and Breakdown Handling
-A negotiation breakdown or deadlock can occur through several distinct mechanisms:
 
+The system keeps separate deadlock rules for the two negotiation structures.
+
+#### AI-vs-AI Mode
+- The existing `detect_deadlock()` logic is preserved.
+- It can detect repeated identical messages, repeated unchanged `COUNTER` allocations, and negotiations with negligible numerical movement.
+- Existing mediation/resolution behavior is unchanged.
+- Maximum-round handling remains unchanged.
+
+#### Human vs AI Practice Mode
+- Practice Mode does **not** use the AI-vs-AI deadlock detector.
+- After each completed AI deliberation round, the orchestrator builds a comparable allocation snapshot.
+- A Practice Mode deadlock is declared only when the allocation state is unchanged across two consecutive completed rounds for all four participants:
+  - Human Participant
+  - Government Agent
+  - NGO Agent
+  - District Administration Agent
+- For the Human Participant, an `OFFER`/`COUNTER` uses the submitted proposal; an `ACCEPT`/`REJECT` uses the proposal being evaluated.
+- If any participant changes their allocation, the Practice Mode deadlock condition does not trigger.
+- The new Practice Mode condition does not invoke the existing AI-vs-AI mediation path.
+- The existing final-round behavior is preserved: when the configured maximum round is reached, Practice Mode still enters its existing final-decision flow.
+
+#### Other Existing Breakdown Conditions
 - Human Rejection of Final Proposal:
-  - The primary explicit deadlock condition in Practice Mode.
-  - Occurs when the human participant clicks Reject after the AI roundtable has completed its deliberations, terminating the session without an agreement.
+  - The human can reject the final AI-generated distribution, terminating the session without an agreement.
 - Lack of Unanimous Agreement:
-  - Practice Mode requires unanimous alignment across all four participants (Human, Government, NGO, and District Administration).
-  - If accepted proposals do not reconcile across all parties, consensus is not reached.
-- Non-Converging Counter-Proposals:
-  - When AI stakeholders continuously produce divergent counter-proposals, consensus remains unfulfilled.
-  - Rather than terminating prematurely, the system allows the human participant to intervene and steer the negotiation.
+  - Practice Mode requires unanimous alignment across all four participants for consensus.
 - Exhaustion of Maximum Rounds:
-  - Governed by the orchestrator round limit (max_rounds).
-  - While automated simulations transition directly to a deadlock state upon reaching the round limit, Practice Mode pauses to await the human participant's final executive decision.
+  - Governed by the orchestrator's `max_rounds` setting.
+  - Practice Mode continues to use its existing final-decision behavior on the final configured round.
 - Infeasible Resource Constraints:
-  - If a proposed allocation exceeds available resource inventories, automated validation overrides an acceptance to a Counter action.
-  - This prevents invalid agreements from being recorded as valid consensus.
+  - If a proposed allocation exceeds available resource inventories, validation prevents an invalid agreement from being recorded.
 
-Summary: Deadlock can occur when the human rejects the AI-generated final proposal, when the four participants cannot agree on the same allocation, or when resource constraints prevent a valid common proposal.
+Summary: AI-vs-AI and Human-vs-AI Practice Mode use different deadlock semantics because their interaction models are different. AI-vs-AI retains its existing stall/mediation logic, while Practice Mode detects a stall only when the complete four-participant allocation state remains unchanged across consecutive completed rounds.
 
 ### 6. User Interface Redesign
 - Redesigned the Practice Mode interface to accommodate a 4-party roundtable (Human + 3 AI agents).

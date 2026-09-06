@@ -15,6 +15,7 @@ from services.gemini_service import (
 from services.evaluation_engine import (
     calculate_consensus,
     detect_deadlock,
+    detect_practice_deadlock,
     generate_turn_evaluation,
     _resource_priority,
     build_outcome_analysis,
@@ -194,6 +195,11 @@ class NegotiationOrchestrator:
             # GAP 2/3: deadlock-detection bookkeeping
             "prev_proposals": {},
             "deadlock_detected": False,
+
+            # Practice Mode compares completed round allocations separately
+            # from the existing AI-vs-AI deadlock detector.
+            "prev_practice_round": None,
+
             "resolution_attempted": False,
             "resolution_succeeded": False,
 
@@ -1279,6 +1285,136 @@ class NegotiationOrchestrator:
         )
 
     # =========================================================
+    # PRACTICE MODE DEADLOCK HELPERS
+    # =========================================================
+
+    def _build_practice_round_snapshot(
+        self,
+        state: Dict[str, Any],
+    ):
+        """
+        Build the comparable allocation state for a completed Practice
+        Mode round.
+
+        The Human Participant's effective allocation is taken from the
+        human's latest action in the current round. For ACCEPT/REJECT,
+        the incoming proposal is the allocation the human evaluated.
+        For OFFER/COUNTER, parsed_proposal is the human's own allocation.
+
+        Each configured AI participant contributes its latest proposal
+        from state["last_proposals"].
+
+        Returns None when a required participant has no comparable
+        allocation yet. Missing data must never count as "unchanged".
+        """
+        current_round = state.get("current_round", 1)
+        history = state.get("history", [])
+
+        human_entries = [
+            item
+            for item in history
+            if item.get("agent") == "Human Participant"
+            and item.get("round") == current_round
+        ]
+
+        if not human_entries:
+            return None
+
+        human_entry = human_entries[-1]
+        human_proposal = human_entry.get("parsed_proposal") or {}
+
+        if not human_proposal:
+            human_proposal = human_entry.get("incoming_proposal") or {}
+
+        if not isinstance(human_proposal, dict) or not human_proposal:
+            return None
+
+        snapshot = {
+            "Human Participant": {
+                "allocation": human_proposal,
+            }
+        }
+
+        for agent in state.get("agents", []):
+            if isinstance(agent, dict):
+                agent_name = agent.get("name")
+            else:
+                agent_name = getattr(agent, "name", None)
+
+            if not agent_name:
+                continue
+
+            proposal = state.get("accepted_proposals", {}).get(agent_name)
+
+            if not isinstance(proposal, dict) or not proposal:
+                proposal = state.get("last_proposals", {}).get(agent_name)
+
+            if not isinstance(proposal, dict) or not proposal:
+                return None
+
+            snapshot[agent_name] = {
+                "allocation": proposal,
+            }
+
+        return snapshot
+
+    def _check_practice_deadlock(
+        self,
+        state: Dict[str, Any],
+    ) -> bool:
+        """
+        Apply the Practice Mode-only deadlock rule after a completed AI
+        round. Existing AI-vs-AI deadlock detection and mediation are not
+        involved here.
+        """
+        # Preserve the existing max-round/final-decision behavior. A final
+        # round should still enter the existing final-decision flow.
+        if state.get("current_round", 1) >= state.get("max_rounds", 1):
+            return False
+
+        current_snapshot = self._build_practice_round_snapshot(state)
+
+        if current_snapshot is None:
+            return False
+
+        previous_snapshot = state.get("prev_practice_round")
+
+        agent_names = [
+            item.get("name")
+            for item in state.get("agents", [])
+            if item.get("name")
+        ]
+
+        deadlocked = detect_practice_deadlock(
+            previous_snapshot,
+            current_snapshot,
+            participant_names=agent_names,
+        )
+
+        if deadlocked:
+            state["deadlock_detected"] = True
+            state["negotiation_ended"] = True
+            state["consensus_reached"] = False
+            state["status"] = "negotiation_breakdown"
+            state["final_allocation"] = (
+                dict(state.get("current_proposal", {}))
+                if state.get("current_proposal")
+                else None
+            )
+            state["final_report"] = self._build_final_report(state)
+
+            print(
+                "[PRACTICE DEADLOCK] "
+                "Human Participant + all AI participants kept the same "
+                "allocation across two consecutive completed rounds."
+            )
+            return True
+
+        state["prev_practice_round"] = current_snapshot
+        state["deadlock_detected"] = False
+        return False
+
+    # =========================================================
     # STEP
     # =========================================================
 
@@ -1330,7 +1466,9 @@ class NegotiationOrchestrator:
 
         # After all configured AI agents have responded in this round:
         if state.get("practice_mode") and not state.get("negotiation_ended"):
-            if state["current_round"] >= state["max_rounds"]:
+            if self._check_practice_deadlock(state):
+                state["awaiting_final_decision"] = False
+            elif state["current_round"] >= state["max_rounds"]:
                 state["awaiting_final_decision"] = True
                 state["status"] = "Final Decision"
                 print(f"[PRACTICE] Round {state['current_round']}/{state['max_rounds']} AI deliberation complete. Awaiting human final decision.")
@@ -1416,7 +1554,9 @@ class NegotiationOrchestrator:
 
         # After all configured AI agents have responded in this round:
         if state.get("practice_mode") and not state.get("negotiation_ended"):
-            if state["current_round"] >= state["max_rounds"]:
+            if self._check_practice_deadlock(state):
+                state["awaiting_final_decision"] = False
+            elif state["current_round"] >= state["max_rounds"]:
                 state["awaiting_final_decision"] = True
                 state["status"] = "Final Decision"
                 print(f"[PRACTICE] Round {state['current_round']}/{state['max_rounds']} AI deliberation complete. Awaiting human final decision.")
