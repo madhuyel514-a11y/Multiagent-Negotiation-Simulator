@@ -14,7 +14,9 @@ sys.path.insert(0, BACKEND_DIR)
 # Load configuration before importing modules that initialize Gemini clients.
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+import json
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -290,6 +292,71 @@ def practice_turn(body: PracticeTurnRequest):
             "final_allocation": current_state.get("final_allocation"),
             "final_report": current_state.get("final_report"),
         }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+# =========================================================
+# PRACTICE MODE: STREAMING TURN (PROGRESSIVE AGENT-BY-AGENT RESPONSE)
+# =========================================================
+
+@app.post("/api/practice/stream-turn")
+async def practice_stream_turn(body: PracticeTurnRequest):
+    session_id = body.session_id
+
+    if not orchestrator.session_exists(session_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found",
+        )
+
+    try:
+        orchestrator.sessions[session_id]["is_practice"] = True
+        orchestrator.sessions[session_id]["state"]["practice_mode"] = True
+
+        # 1. Add human's proposal / counter / accept / reject for current round
+        human_result = orchestrator.add_human_message(
+            session_id=session_id,
+            message=body.message,
+            resource=body.resource,
+            amount=body.amount,
+            action=body.action,
+            proposal=body.proposal,
+        )
+
+        if not human_result.get("success"):
+            async def error_generator():
+                yield f"data: {json.dumps({'type': 'error', 'detail': human_result})}\n\n"
+            return StreamingResponse(error_generator(), media_type="text/event-stream")
+
+        initial_state = orchestrator.get_state(session_id)
+
+        async def event_generator():
+            # 1. Yield human move confirmation
+            yield f"data: {json.dumps({'type': 'human_move_recorded', 'human_move': human_result, 'state': initial_state})}\n\n"
+
+            # 2. If human acceptance closed unanimous agreement early
+            if initial_state.get("negotiation_ended"):
+                yield f"data: {json.dumps({'type': 'round_complete', 'state': initial_state})}\n\n"
+                return
+
+            # 3. Deliberate AI agents one by one and stream each response
+            async for event in orchestrator.stream_practice_round(session_id):
+                yield f"data: {json.dumps(event)}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     except Exception as error:
         raise HTTPException(

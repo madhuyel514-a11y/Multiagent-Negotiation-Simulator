@@ -1327,6 +1327,104 @@ class NegotiationOrchestrator:
         return ai_responses
 
     # =========================================================
+    # PRACTICE ROUNDTABLE STREAMING STEP
+    # =========================================================
+
+    async def stream_practice_round(
+        self,
+        session_id: str
+    ):
+        """
+        Executes an AI deliberation round in Practice Mode, yielding events as each
+        individual agent starts and finishes so the frontend can stream responses progressively.
+        """
+        if session_id not in self.sessions:
+            raise ValueError(
+                "Negotiation session not found."
+            )
+
+        entry = self.sessions[session_id]
+        agents = entry["agents"]
+        state = entry["state"]
+
+        if state.get("negotiation_ended"):
+            yield {
+                "type": "round_complete",
+                "ai_response": None,
+                "state": self.get_state(session_id),
+                "round": state.get("current_round", 1),
+                "consensus": state.get("consensus", 0.0),
+                "negotiation_ended": True,
+                "awaiting_final_decision": False,
+                "status": state.get("status", "Negotiation complete"),
+                "final_allocation": state.get("final_allocation"),
+                "final_report": state.get("final_report"),
+            }
+            return
+
+        state["current_agent_idx"] = 0
+
+        for i in range(len(agents)):
+            if state.get("negotiation_ended"):
+                break
+
+            current_agent = agents[state["current_agent_idx"] % len(agents)]
+            agent_name = getattr(current_agent, "name", f"Agent {i+1}")
+
+            # 1. Yield start event so UI knows this agent is deliberating
+            yield {
+                "type": "agent_start",
+                "agent": agent_name,
+                "agent_index": i,
+                "total_agents": len(agents),
+                "round": state.get("current_round", 1),
+            }
+
+            # 2. Step the single agent
+            ai_result = await self._step_async(session_id)
+            current_state = self.get_state(session_id)
+
+            # 3. Yield agent response immediately
+            yield {
+                "type": "agent_response",
+                "agent": agent_name,
+                "agent_index": i,
+                "total_agents": len(agents),
+                "ai_response": ai_result,
+                "state": current_state,
+                "consensus": current_state.get("consensus", 0.0),
+                "round": current_state.get("current_round", 1),
+                "negotiation_ended": current_state.get("negotiation_ended", False),
+            }
+
+        # After all configured AI agents have responded in this round:
+        if state.get("practice_mode") and not state.get("negotiation_ended"):
+            if state["current_round"] >= state["max_rounds"]:
+                state["awaiting_final_decision"] = True
+                state["status"] = "Final Decision"
+                print(f"[PRACTICE] Round {state['current_round']}/{state['max_rounds']} AI deliberation complete. Awaiting human final decision.")
+            else:
+                state["current_round"] += 1
+                state["prev_proposals"] = dict(state.get("last_proposals", {}))
+                state["status"] = "ongoing"
+                state["awaiting_final_decision"] = False
+                print(f"[PRACTICE] Round {state['current_round'] - 1} complete. Advanced to Round {state['current_round']}/{state['max_rounds']}.")
+
+        final_state = self.get_state(session_id)
+        yield {
+            "type": "round_complete",
+            "state": final_state,
+            "round": final_state.get("current_round", 1),
+            "consensus": final_state.get("consensus", 0.0),
+            "negotiation_ended": final_state.get("negotiation_ended", False),
+            "awaiting_final_decision": final_state.get("awaiting_final_decision", False),
+            "status": final_state.get("status", "Your turn"),
+            "final_allocation": final_state.get("final_allocation"),
+            "final_report": final_state.get("final_report"),
+        }
+
+
+    # =========================================================
     # PRACTICE MODE: FINAL EXECUTIVE DECISION
     # =========================================================
 

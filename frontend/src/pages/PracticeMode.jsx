@@ -565,6 +565,7 @@ function PracticeMode() {
     useState(null);
 
   const [loading, setLoading] = useState(false);
+  const [deliberatingAgent, setDeliberatingAgent] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestionReasoning, setSuggestionReasoning] = useState(null);
 
@@ -801,126 +802,258 @@ function PracticeMode() {
 
     try {
       setLoading(true);
+      setDeliberatingAgent(null);
       setStatus('AI agency heads (Government, NGO, District) are deliberating...');
 
-      const response = await fetch(
-        `${API_URL}/api/practice/turn`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            session_id: sessionId,
-            message: humanMessage,
-            resource: resource,
-            amount: amount ? Number(amount) : 0,
-            action: selectedAction,
-            ...(currentProposal && Object.keys(currentProposal).length > 0
-              ? { proposal: currentProposal }
-              : {}),
-          }),
-        }
-      );
+      const payload = {
+        session_id: sessionId,
+        message: humanMessage,
+        resource: resource,
+        amount: amount ? Number(amount) : 0,
+        action: selectedAction,
+        ...(currentProposal && Object.keys(currentProposal).length > 0
+          ? { proposal: currentProposal }
+          : {}),
+      };
 
-      const responseText = await response.text();
+      let streamSucceeded = false;
 
-      if (!response.ok) {
-        throw new Error(
-          `Practice turn failed: ${response.status} ${responseText}`
+      // 1. Try progressive streaming endpoint for live agent-by-agent updates
+      try {
+        const streamResponse = await fetch(
+          `${API_URL}/api/practice/stream-turn`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          }
         );
+
+        if (streamResponse.ok && streamResponse.body) {
+          const reader = streamResponse.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop();
+
+            for (const part of parts) {
+              const trimmed = part.trim();
+              if (!trimmed.startsWith('data:')) continue;
+              const jsonStr = trimmed.replace(/^data:\s*/, '').trim();
+              if (!jsonStr) continue;
+
+              try {
+                const event = JSON.parse(jsonStr);
+
+                if (event.type === 'agent_start') {
+                  setDeliberatingAgent(event.agent);
+                  setStatus(`${event.agent} is deliberating their response...`);
+                } else if (event.type === 'agent_response') {
+                  const aiResp = event.ai_response;
+                  const agentName = event.agent || aiResp?.agent;
+                  setDeliberatingAgent(null);
+
+                  if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
+                    setCurrentProposal(aiResp.current_proposal);
+                  }
+                  if (aiResp?.gemini_metrics) {
+                    setLlmMetrics(aiResp.gemini_metrics);
+                  }
+                  if (event.consensus !== undefined && event.consensus !== null) {
+                    setConsensus(Number(event.consensus));
+                  }
+
+                  const history = aiResp?.history || [];
+                  const matchingTurn = history.length
+                    ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
+                    : null;
+
+                  if (aiResp?.message) {
+                    setMessages((previous) => [
+                      ...previous,
+                      {
+                        sender: agentName || 'AI Agent',
+                        text: aiResp.message,
+                        action: matchingTurn?.action || aiResp?.action || 'COUNTER',
+                        stance: matchingTurn?.stance || aiResp?.stance || 'firm',
+                        round: currentTurnRound,
+                        proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
+                        reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
+                      },
+                    ]);
+                  }
+                } else if (event.type === 'round_complete') {
+                  setDeliberatingAgent(null);
+                  const stateObj = event.state;
+
+                  const consensusVal = event.consensus ?? stateObj?.consensus;
+                  if (consensusVal !== undefined && consensusVal !== null) {
+                    setConsensus(Number(consensusVal));
+                  }
+
+                  const isConsensus = event.consensus_reached || stateObj?.consensus_reached;
+                  const isEnded = event.negotiation_ended || stateObj?.negotiation_ended;
+                  const isAwaitingFinal = event.awaiting_final_decision || stateObj?.awaiting_final_decision;
+
+                  if (event.final_report || stateObj?.final_report) {
+                    setFinalReport(event.final_report || stateObj?.final_report);
+                  }
+                  if (event.final_allocation || stateObj?.final_allocation) {
+                    setFinalAllocation(event.final_allocation || stateObj?.final_allocation);
+                  }
+
+                  if (isConsensus) {
+                    setSessionStatus('Agreement reached');
+                    setStatus('Negotiation complete');
+                    setAwaitingFinalDecision(false);
+                  } else if (isEnded) {
+                    setSessionStatus('Negotiation ended');
+                    setStatus('Negotiation complete');
+                    setAwaitingFinalDecision(false);
+                  } else if (isAwaitingFinal) {
+                    setAwaitingFinalDecision(true);
+                    setStatus('Final Decision');
+                    setSessionStatus('Deliberation Complete');
+                  } else {
+                    setAwaitingFinalDecision(false);
+                    const nextRound = event.round ?? stateObj?.current_round;
+                    if (nextRound !== undefined && nextRound !== null) {
+                      setRound(Math.min(Number(nextRound), totalRounds));
+                    }
+                    setSessionStatus('Active');
+                    setStatus('Your turn');
+                    setAction('Counter');
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to parse SSE event chunk:', e, jsonStr);
+              }
+            }
+          }
+          streamSucceeded = true;
+        }
+      } catch (streamErr) {
+        console.warn('Streaming error, falling back to batch turn:', streamErr);
       }
 
-      const data = JSON.parse(responseText);
-      const aiResponses = Array.isArray(data?.ai_responses) && data.ai_responses.length > 0
-        ? data.ai_responses
-        : [data?.ai_response || data?.ai || data].filter(Boolean);
+      // 2. Fallback to standard batch turn if stream did not complete
+      if (!streamSucceeded) {
+        const response = await fetch(
+          `${API_URL}/api/practice/turn`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          }
+        );
 
-      const newMessages = [];
-      let latestProposal = currentProposal;
-      let lastMetrics = llmMetrics;
+        const responseText = await response.text();
 
-      for (const aiResp of aiResponses) {
-        if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
-          latestProposal = aiResp.current_proposal;
+        if (!response.ok) {
+          throw new Error(
+            `Practice turn failed: ${response.status} ${responseText}`
+          );
         }
 
-        if (aiResp?.gemini_metrics) {
-          lastMetrics = aiResp.gemini_metrics;
+        const data = JSON.parse(responseText);
+        const aiResponses = Array.isArray(data?.ai_responses) && data.ai_responses.length > 0
+          ? data.ai_responses
+          : [data?.ai_response || data?.ai || data].filter(Boolean);
+
+        const newMessages = [];
+        let latestProposal = currentProposal;
+        let lastMetrics = llmMetrics;
+
+        for (const aiResp of aiResponses) {
+          if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
+            latestProposal = aiResp.current_proposal;
+          }
+
+          if (aiResp?.gemini_metrics) {
+            lastMetrics = aiResp.gemini_metrics;
+          }
+
+          const history = aiResp?.history || [];
+          const agentName = aiResp?.agent;
+          const matchingTurn = history.length
+            ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
+            : null;
+
+          if (aiResp?.message) {
+            newMessages.push({
+              sender: agentName || 'AI Agent',
+              text: aiResp.message,
+              action: matchingTurn?.action || aiResp?.action || 'COUNTER',
+              stance: matchingTurn?.stance || aiResp?.stance || 'firm',
+              round: currentTurnRound,
+              proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
+              reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
+            });
+          }
         }
 
-        const history = aiResp?.history || [];
-        const agentName = aiResp?.agent;
-        const matchingTurn = history.length
-          ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
-          : null;
-
-        if (aiResp?.message) {
-          newMessages.push({
-            sender: agentName || 'AI Agent',
-            text: aiResp.message,
-            action: matchingTurn?.action || aiResp?.action || 'COUNTER',
-            stance: matchingTurn?.stance || aiResp?.stance || 'firm',
-            round: currentTurnRound,
-            proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
-            reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
-          });
+        if (latestProposal && Object.keys(latestProposal).length > 0) {
+          setCurrentProposal(latestProposal);
         }
-      }
 
-      if (latestProposal && Object.keys(latestProposal).length > 0) {
-        setCurrentProposal(latestProposal);
-      }
-
-      if (lastMetrics) {
-        setLlmMetrics(lastMetrics);
-      }
-
-      if (newMessages.length > 0) {
-        setMessages((previous) => [...previous, ...newMessages]);
-      }
-
-      const stateObj = data?.state;
-
-      // Update consensus meter
-      const consensusVal = data?.consensus ?? stateObj?.consensus;
-      if (consensusVal !== undefined && consensusVal !== null) {
-        setConsensus(Number(consensusVal));
-      }
-
-      // Update negotiation status
-      const isConsensus = data?.consensus_reached || stateObj?.consensus_reached;
-      const isEnded = data?.negotiation_ended || stateObj?.negotiation_ended;
-      const isAwaitingFinal = data?.awaiting_final_decision || stateObj?.awaiting_final_decision;
-
-      if (data?.final_report || stateObj?.final_report) {
-        setFinalReport(data?.final_report || stateObj?.final_report);
-      }
-      if (data?.final_allocation || stateObj?.final_allocation) {
-        setFinalAllocation(data?.final_allocation || stateObj?.final_allocation);
-      }
-
-      if (isConsensus) {
-        setSessionStatus('Agreement reached');
-        setStatus('Negotiation complete');
-        setAwaitingFinalDecision(false);
-      } else if (isEnded) {
-        setSessionStatus('Negotiation ended');
-        setStatus('Negotiation complete');
-        setAwaitingFinalDecision(false);
-      } else if (isAwaitingFinal) {
-        setAwaitingFinalDecision(true);
-        setStatus('Final Decision');
-        setSessionStatus('Deliberation Complete');
-      } else {
-        setAwaitingFinalDecision(false);
-        const nextRound = data?.round ?? stateObj?.current_round;
-        if (nextRound !== undefined && nextRound !== null) {
-          setRound(Math.min(Number(nextRound), totalRounds));
+        if (lastMetrics) {
+          setLlmMetrics(lastMetrics);
         }
-        setSessionStatus('Active');
-        setStatus('Your turn');
-        setAction('Counter');
+
+        if (newMessages.length > 0) {
+          setMessages((previous) => [...previous, ...newMessages]);
+        }
+
+        const stateObj = data?.state;
+
+        const consensusVal = data?.consensus ?? stateObj?.consensus;
+        if (consensusVal !== undefined && consensusVal !== null) {
+          setConsensus(Number(consensusVal));
+        }
+
+        const isConsensus = data?.consensus_reached || stateObj?.consensus_reached;
+        const isEnded = data?.negotiation_ended || stateObj?.negotiation_ended;
+        const isAwaitingFinal = data?.awaiting_final_decision || stateObj?.awaiting_final_decision;
+
+        if (data?.final_report || stateObj?.final_report) {
+          setFinalReport(data?.final_report || stateObj?.final_report);
+        }
+        if (data?.final_allocation || stateObj?.final_allocation) {
+          setFinalAllocation(data?.final_allocation || stateObj?.final_allocation);
+        }
+
+        if (isConsensus) {
+          setSessionStatus('Agreement reached');
+          setStatus('Negotiation complete');
+          setAwaitingFinalDecision(false);
+        } else if (isEnded) {
+          setSessionStatus('Negotiation ended');
+          setStatus('Negotiation complete');
+          setAwaitingFinalDecision(false);
+        } else if (isAwaitingFinal) {
+          setAwaitingFinalDecision(true);
+          setStatus('Final Decision');
+          setSessionStatus('Deliberation Complete');
+        } else {
+          setAwaitingFinalDecision(false);
+          const nextRound = data?.round ?? stateObj?.current_round;
+          if (nextRound !== undefined && nextRound !== null) {
+            setRound(Math.min(Number(nextRound), totalRounds));
+          }
+          setSessionStatus('Active');
+          setStatus('Your turn');
+          setAction('Counter');
+        }
       }
     } catch (error) {
       console.error(
@@ -940,6 +1073,7 @@ function PracticeMode() {
       setStatus('Connection error');
     } finally {
       setLoading(false);
+      setDeliberatingAgent(null);
     }
   };
 
@@ -1597,12 +1731,17 @@ function PracticeMode() {
                 {loading && (
                   <div className="relative pl-8">
                     <div className="absolute left-0 top-5 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm bg-blue-600 animate-ping" />
-                    <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
-                      <p className="text-xs font-bold uppercase tracking-wider text-blue-800">
-                        AI Agents are Deliberating...
-                      </p>
-                      <p className="mt-1 text-sm text-slate-500 italic">
-                        Evaluating positions, trade-offs, and calculating multi-district allocations...
+                    <div className="rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-blue-50/90 p-4 shadow-xs animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block h-2 w-2 rounded-full bg-blue-600 animate-ping" />
+                        <p className="text-xs font-extrabold uppercase tracking-wider text-blue-950">
+                          {deliberatingAgent
+                            ? `${deliberatingAgent} is evaluating & deliberating...`
+                            : 'AI agency heads are reviewing your proposal...'}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600 italic">
+                        Evaluating trade-offs, calculating regional needs, and formulating live counter-proposals...
                       </p>
                     </div>
                   </div>
