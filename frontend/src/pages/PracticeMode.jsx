@@ -575,12 +575,27 @@ function PracticeMode() {
 
   const autoStartRef = useRef(false);
 
+  useEffect(() => {
+    if (!finalReport && !finalAllocation) return;
+
+    localStorage.setItem('negotiationOutcome', JSON.stringify({
+      final_report: finalReport,
+      final_allocation: finalAllocation,
+      history: messages,
+      current_round: round,
+      scenario: selectedScenario,
+      config: savedConfig,
+      mode: 'practice',
+    }));
+  }, [finalReport, finalAllocation, messages, round, selectedScenario, savedConfig]);
+
   // --------------------------------------------------
   // START SESSION
   // --------------------------------------------------
 
   const startSession = async (scenario) => {
     try {
+      localStorage.removeItem('negotiationOutcome');
       const configuredScenario =
         (savedConfig && savedConfig.scenario) || scenario || selectedScenario;
 
@@ -2487,6 +2502,19 @@ function PracticeMode() {
         return (
           <div className="mt-8 rounded-[1.75rem] border border-emerald-200 bg-emerald-50/80 p-6 sm:p-8 shadow-sm">
             {/* Header */}
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Outcome ready</p>
+                <p className="mt-1 text-sm text-emerald-800">Review the complete agreement and negotiation timeline.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/outcome')}
+                className="rounded-full bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
+              >
+                View outcome
+              </button>
+            </div>
             <div className="flex items-center gap-2.5 font-bold text-emerald-800 text-xl sm:text-2xl mb-2">
               <CheckCircle size={26} className="text-emerald-700" />
               Final Negotiation Report

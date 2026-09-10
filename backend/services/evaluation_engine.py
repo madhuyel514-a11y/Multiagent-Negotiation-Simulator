@@ -601,6 +601,40 @@ def _concession_patterns(state, final_allocation, participants):
     return patterns
 
 
+def _concession_timeline(state):
+    """Build chronological, per-agent proposal changes from negotiation history."""
+    previous_proposals = {}
+    timeline = []
+
+    for entry in state.get("history", []):
+        agent = entry.get("agent")
+        proposal = entry.get("parsed_proposal")
+        has_proposal = isinstance(proposal, dict) and bool(proposal)
+        previous = previous_proposals.get(agent) if agent else None
+        increased = {}
+        decreased = {}
+
+        if has_proposal and previous is not None:
+            increased, decreased = _proposal_delta(previous, proposal)
+
+        timeline.append({
+            "round": entry.get("round"),
+            "agent": agent,
+            "action": str(entry.get("action", "")).upper(),
+            "proposal": proposal if has_proposal else None,
+            "proposal_changed": bool(increased or decreased),
+            "increased": increased,
+            "decreased": decreased,
+            "concessions": decreased,
+            "concession_quantity": sum(decreased.values()),
+        })
+
+        if agent and has_proposal:
+            previous_proposals[agent] = proposal
+
+    return timeline
+
+
 def _agent_performance(state, final_allocation, participants, concession_patterns):
     history_by_agent = {}
     for entry in state.get("history", []):
@@ -651,6 +685,7 @@ def _agent_performance(state, final_allocation, participants, concession_pattern
         total_turns = len(entries)
         performance[agent] = {
             "average_satisfaction": round(sum(scores) / len(scores), 2) if scores else 0.0,
+            "objective_satisfaction": round(sum(scores) / len(scores), 2) if scores else None,
             "offers": action_counts["OFFER"],
             "counters": action_counts["COUNTER"],
             "accepts": action_counts["ACCEPT"],
@@ -713,6 +748,7 @@ def build_outcome_analysis(state):
             "outcome": state.get("status", "ongoing"),
         },
         "concession_patterns": concession_patterns,
+        "concession_timeline": _concession_timeline(state),
         "agent_performance": _agent_performance(
             state,
             final_allocation,

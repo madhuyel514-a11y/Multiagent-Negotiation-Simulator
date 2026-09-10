@@ -5,7 +5,8 @@ const steps = [
   { label: 'Home', path: '/' },
   { label: 'Scenario', path: '/scenarios' },
   { label: 'Configure', path: '/configure' },
-  { label: 'Negotiation', path: '/negotiation' }
+  { label: 'Negotiation', path: '/negotiation' },
+  { label: 'Outcome', path: '/outcome' }
 ];
 
 function Layout({ children }) {

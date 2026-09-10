@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Activity, CheckCircle, ClipboardList, Shield, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000';
@@ -291,6 +292,7 @@ function TranscriptEntry({ item, previousProposal, agentIndex }) {
 // Main component
 // ─────────────────────────────────────────────
 function NegotiationArena() {
+  const navigate = useNavigate();
   const [scenario, setScenario] = useState(null);
   const [config, setConfig] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -353,10 +355,24 @@ function NegotiationArena() {
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
     if (data?.gemini_metrics) setGeminiMetrics(data.gemini_metrics);
+
+    const completedReport = state.final_report ?? data?.final_report;
+    if (completedReport || state.negotiation_ended || data?.negotiation_ended) {
+      localStorage.setItem('negotiationOutcome', JSON.stringify({
+        final_report: completedReport,
+        final_allocation: state.final_allocation ?? data?.final_allocation ?? null,
+        history: state.history || [],
+        current_round: state.current_round ?? data?.round ?? 1,
+        scenario,
+        config,
+        mode: 'ai',
+      }));
+    }
   };
 
   const startSession = async () => {
     if (!scenario || !config) return null;
+    localStorage.removeItem('negotiationOutcome');
     const response = await fetch(`${API_BASE}/api/negotiation/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -843,6 +859,19 @@ function NegotiationArena() {
       {/* ── Final Report ── */}
       {(consensusReached || negotiationEnded) && (
         <div className="mt-8 rounded-[1.75rem] bg-emerald-50/80 p-6 sm:p-8">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Outcome ready</p>
+              <p className="mt-1 text-sm text-emerald-800">Review the complete agreement and negotiation timeline.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/outcome')}
+              className="rounded-full bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
+            >
+              View outcome
+            </button>
+          </div>
           <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl mb-2">
             <CheckCircle size={24} />
             Final Negotiation Report

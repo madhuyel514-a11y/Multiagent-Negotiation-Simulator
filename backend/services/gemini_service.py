@@ -747,23 +747,61 @@ def _fallback_response(prompt, allowed_resources=None, agent_name=None,
     }
 
 
-def _generic_fallback_response(allowed_resources, resource_quantities, last_proposals, reason):
+def _generic_fallback_response(
+    allowed_resources,
+    resource_quantities,
+    last_proposals,
+    reason,
+    recipient_names=None,
+    current_proposal=None,
+):
     """Return a scenario-safe response when no Gemini client is configured."""
     print(f"[FALLBACK] reason={reason}")
+
+    if current_proposal:
+        proposal = "; ".join(
+            f"{recipient} Allocation: "
+            + "; ".join(f"{resource}: {quantity} units" for resource, quantity in values.items())
+            for recipient, values in current_proposal.items()
+        ) if all(isinstance(value, dict) for value in current_proposal.values()) else "; ".join(
+            f"{resource}: {quantity} units" for resource, quantity in current_proposal.items()
+        )
+        return {
+            "message": f"I accept the valid allocation currently on the table: {proposal}.",
+            "reasoning": "The current shared allocation is valid and acceptable against this agent's objectives.",
+            "stance": "accept",
+            "action": "ACCEPT",
+        }
+
+    recipient_names = [name for name in (recipient_names or []) if name]
     proposal_parts = []
+    proposal_values = {}
     for resource in allowed_resources or []:
         available = int(resource_quantities.get(resource.lower(), 0))
-        quantity = min(available, max(1, round(available / 3))) if available else 0
-        proposal_parts.append(f"{resource}: {quantity} units")
+        if recipient_names:
+            share, remainder = divmod(available, len(recipient_names))
+            for index, recipient in enumerate(recipient_names):
+                proposal_values.setdefault(recipient, {})[resource] = share + (1 if index < remainder else 0)
+        else:
+            quantity = min(available, max(1, round(available / 3))) if available else 0
+            proposal_parts.append(f"{resource}: {quantity} units")
 
-    proposal = "; ".join(proposal_parts)
-    action = "COUNTER" if last_proposals else "OFFER"
+    if recipient_names:
+        proposal = "; ".join(
+            f"{recipient} Allocation: "
+            + "; ".join(f"{resource}: {quantity} units" for resource, quantity in values.items())
+            for recipient, values in proposal_values.items()
+        )
+    else:
+        proposal = "; ".join(proposal_parts)
+
+    action = "OFFER"
     return {
         "message": (
             f"I have reviewed the current negotiation context. "
-            f"My {action.lower()} is: {proposal}."
+            f"My opening shared allocation is: {proposal}."
         ),
-        "reasoning": "Fallback response uses only the resources and quantities supplied by the scenario.",
+        "reasoning": "Fallback response uses a valid equitable allocation across the configured affected recipients.",
         "stance": "moderate",
         "action": action,
     }
@@ -856,6 +894,8 @@ async def ask_model(
             resource_quantities,
             last_proposals,
             "no client/API key",
+            recipient_names=recipient_names,
+            current_proposal=current_proposal,
         )
 
     # -----------------------------------------------------
@@ -1105,6 +1145,8 @@ Return ONLY valid JSON:
         resource_quantities,
         last_proposals,
         last_failure,
+        recipient_names=recipient_names,
+        current_proposal=current_proposal,
     )
 
 
