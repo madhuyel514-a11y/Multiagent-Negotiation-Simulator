@@ -573,7 +573,125 @@ function PracticeMode() {
     INITIAL_LLM_METRICS
   );
 
+  // --------------------------------------------------
+  // DOWNLOAD SUMMARY REPORT
+  // --------------------------------------------------
+
+  const downloadSummaryReport = () => {
+    const report = `DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM
+  FINAL NEGOTIATION SUMMARY REPORT
+  ========================================
+
+  Scenario: ${selectedScenario?.name || selectedScenario?.title || 'Practice'}
+  Role: Human Participant
+
+  STATUS
+  ----------------------------------------
+  Negotiation Status: ${sessionStatus}
+  Rounds Used: ${round} / ${totalRounds}
+  Consensus: ${(Number(consensus) * 100).toFixed(0)}%
+
+  FINAL RESOURCE ALLOCATION
+  ----------------------------------------
+  ${JSON.stringify(finalAllocation || currentProposal, null, 2)}
+
+  NEGOTIATION HISTORY
+  ----------------------------------------
+  ${messages
+    .map(
+      (msg, index) =>
+        `${index + 1}. Round ${msg.round || '-'} - ${msg.sender || 'Participant'}:
+  ${msg.text || ''}`
+    )
+    .join('\n\n')}
+
+  AI / LLM METRICS
+  ----------------------------------------
+  ${JSON.stringify(llmMetrics, null, 2)}
+
+  FINAL REPORT
+  ----------------------------------------
+  ${JSON.stringify(finalReport, null, 2)}
+
+  ========================================
+  Generated from Practice Mode.
+  `;
+
+    const blob = new Blob([report], {
+      type: 'text/plain;charset=utf-8',
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = 'negotiation-summary-report.txt';
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  };
+
   const autoStartRef = useRef(false);
+    // --------------------------------------------------
+    // DOWNLOAD NEGOTIATION TRANSCRIPT
+    // --------------------------------------------------
+
+    const downloadTranscript = () => {
+      const transcript = messages
+        .map((item, index) => {
+          const sender = item.sender || 'Participant';
+          const text = item.text || '';
+          const action = item.action ? ` [${item.action}]` : '';
+          const messageRound = item.round ? `Round ${item.round}` : '';
+
+          return `${index + 1}. ${messageRound} - ${sender}${action}\n${text}`;
+        })
+        .join('\n\n');
+
+      const report = `DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM
+  NEGOTIATION TRANSCRIPT
+  ========================================
+
+  Scenario: ${selectedScenario?.name || selectedScenario?.title || 'Practice'}
+  Role: Human Participant
+  Status: ${sessionStatus}
+  Current Round: ${round} / ${totalRounds}
+
+  ========================================
+  CONVERSATION
+  ========================================
+
+  ${transcript || 'No negotiation messages recorded yet.'}
+
+  ========================================
+  FINAL STATUS
+  ========================================
+
+  Negotiation Status: ${sessionStatus}
+  Consensus: ${(Number(consensus) * 100).toFixed(0)}%
+
+  Generated from Practice Mode.
+  `;
+
+      const blob = new Blob([report], {
+        type: 'text/plain;charset=utf-8',
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = url;
+      link.download = 'negotiation-transcript.txt';
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     if (!finalReport && !finalAllocation) return;
@@ -1527,135 +1645,9 @@ function PracticeMode() {
       </section>
 
 
-      {/* SCENARIO + RESOURCES */}
-
-      <section className="grid gap-6 lg:grid-cols-3">
-
-        {/* SCENARIO */}
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
-
-          <h2 className="text-lg font-semibold text-slate-900">
-            Scenario
-          </h2>
-
-          <select
-            value={selectedScenario.id}
-            onChange={handleScenarioChange}
-            disabled={loading}
-            className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-100"
-          >
-
-            {scenarios.map(
-              (scenario) => (
-                <option
-                  key={scenario.id}
-                  value={scenario.id}
-                >
-                  {scenario.title ||
-                    scenario.name}
-                </option>
-              )
-            )}
-
-          </select>
-
-
-          {/* ROLE */}
-
-          <div className="mt-5 rounded-xl bg-blue-50 p-4">
-
-            <p className="text-sm text-slate-500">
-              Your Role
-            </p>
-
-            <p className="mt-1 font-semibold text-slate-900">
-              Human Participant
-            </p>
-
-            <p className="mt-3 text-sm text-slate-600">
-              Scenario Role:{' '}
-              {selectedScenario
-                .agents?.[2]?.role ||
-                selectedScenario.role ||
-                'Relief Coordinator'}
-            </p>
-
-          </div>
-
-
-          {/* OBJECTIVE */}
-
-          <div className="mt-4">
-
-            <p className="text-sm font-medium text-slate-500">
-              Objective
-            </p>
-
-            <p className="mt-1 text-sm leading-6 text-slate-700">
-              {selectedScenario.objective ||
-                'Coordinate disaster relief resources fairly and efficiently.'}
-            </p>
-
-          </div>
-
-        </div>
-
-
-        {/* RESOURCES */}
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-          <h2 className="text-lg font-semibold text-slate-900">
-            Resources
-          </h2>
-
-          <div className="mt-4 space-y-3">
-
-            {resourceNames
-              .slice(0, 5)
-              .map((item) => {
-
-                const value =
-                  Array.isArray(
-                    selectedScenario.resources
-                  )
-                    ? null
-                    : selectedScenario
-                      .resources?.[
-                    item
-                    ];
-
-                return (
-                  <div
-                    key={item}
-                    className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3"
-                  >
-
-                    <span className="text-sm font-medium text-slate-700">
-                      {item}
-                    </span>
-
-                    {value !== undefined &&
-                      value !== null && (
-                        <span className="font-semibold text-slate-900">
-                          {value}
-                        </span>
-                      )}
-
-                  </div>
-                );
-              })}
-
-          </div>
-
-        </div>
-
-      </section>
-
       {/* NEGOTIATION */}
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.75fr)_minmax(300px,0.75fr)]">
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
 
           {/* NEGOTIATION HEADER */}
@@ -1669,10 +1661,10 @@ function PracticeMode() {
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                Submit your master proposal to the roundtable of AI agency heads.
+                Review the conversation, evaluate AI proposals, and make your next negotiation decision.
               </p>
               <p className="mt-2 text-sm font-semibold text-slate-700">
-                Roundtable Stakeholders: <span className="text-blue-700 font-bold">Government</span>, <span className="text-emerald-700 font-bold">NGO</span>, and <span className="text-purple-700 font-bold">District Administration</span>
+                Participants: <span className="text-blue-700 font-bold">Government</span> <span className="text-slate-400">·</span> <span className="text-emerald-700 font-bold">NGO</span> <span className="text-slate-400">·</span> <span className="text-purple-700 font-bold">District Administration</span>
               </p>
               {(status === 'Negotiation complete' || sessionStatus === 'Agreement reached' || sessionStatus === 'Deadlock') && (
                 <p className="mt-2 text-sm font-semibold text-emerald-700">
@@ -1683,6 +1675,25 @@ function PracticeMode() {
             </div>
 
             <div className="flex flex-wrap gap-3">
+
+              <button
+                type="button"
+                onClick={downloadTranscript}
+                disabled={messages.length === 0}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Download the complete negotiation transcript"
+              >
+            Download Transcript
+              </button>
+              <button
+                type="button"
+                onClick={downloadSummaryReport}
+                disabled={messages.length === 0}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Download the final negotiation summary report"
+              >
+            Download Summary
+              </button>
 
               <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
                 Round {round} / {totalRounds}
@@ -1712,12 +1723,13 @@ function PracticeMode() {
 
           <div className="p-6">
             <div className="relative">
-              {/* Vertical timeline line */}
-              {messages.length > 0 && (
-                <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-slate-200 rounded-full" />
-              )}
+              {/* Conversation is the primary focus */}
+              <div className="max-h-[680px] overflow-y-auto pr-2">
+                {messages.length > 0 && (
+                  <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-slate-200 rounded-full" />
+                )}
 
-              <div className="space-y-6">
+                <div className="space-y-6">
                 {messages.length === 0 && !loading && (
                   <div className="py-8 text-center text-sm text-slate-400">
                     Submit your opening offer below to begin Round 1 negotiation.
@@ -1762,205 +1774,14 @@ function PracticeMode() {
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             </div>
           </div>
 
 
-          {/* INPUT AREA */}
-
-          <div className="border-t border-slate-200 p-6 space-y-6">
-
-            {/* YOUR TURN BANNER */}
-            {status === 'Your turn' && !awaitingFinalDecision && (
-              <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/95 via-blue-50/90 to-purple-50/95 p-5 shadow-xs">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-3 w-3 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
-                    </span>
-                    <span className="text-sm font-extrabold uppercase tracking-wider text-blue-950">
-                      {round === 1 ? 'ROUND 1 — INITIAL MASTER PROPOSAL' : `YOUR TURN — ROUND ${round} DECISION`}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-blue-100/90 border border-blue-200/80 px-3 py-1 text-xs font-bold text-blue-800 uppercase tracking-wide">
-                      🟣 4th Negotiator (Human)
-                    </span>
-                    <span className="rounded-full bg-purple-100/90 border border-purple-200/80 px-3 py-1 text-xs font-semibold text-purple-800">
-                      Round {round} of {totalRounds}
-                    </span>
-                  </div>
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-slate-700">
-                  {round === 1 ? (
-                    <>You make the <strong>initial proposal</strong> for the negotiation. Allocate all resources across regions in the matrix below and submit. Government, NGO, and District Administration will each evaluate and respond in order.</>
-                  ) : (
-                    <>All 3 AI agency heads (<strong>🔵 Government</strong>, <strong>🟢 NGO</strong>, and <strong>🟠 District Administration</strong>) have responded to your previous proposal. Review their debate above, adjust allocations, and choose to <strong>Counter</strong>, <strong>Accept</strong>, or <strong>Reject</strong>.</>
-                  )}
-                </p>
-
-                <div className="mt-3.5 pt-3.5 border-t border-indigo-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="text-xs text-slate-600">
-                    <span className="font-bold text-indigo-900">💡 AI Assistant:</span> Unsure how to distribute? Click to auto-generate a balanced strategic allocation tailored to regional crisis severities.
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleGetSuggestion}
-                    disabled={loading || suggesting || status !== 'Your turn' || !sessionId}
-                    className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-700 px-4 py-2 text-xs font-bold text-white shadow-md transition hover:from-indigo-700 hover:to-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Sparkles size={15} className={suggesting ? 'animate-spin' : ''} />
-                    {suggesting ? 'Drafting Proposal...' : '✨ Autofill AI Suggestion'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* FINAL EXECUTIVE DECISION PANEL */}
-            {awaitingFinalDecision && (
-              <div className="rounded-2xl border-2 border-indigo-400 bg-gradient-to-br from-indigo-50/95 via-white to-blue-50/90 p-6 shadow-lg space-y-5 animate-fadeIn">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-indigo-100 pb-4">
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <span className="flex h-3.5 w-3.5 relative">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-indigo-600"></span>
-                      </span>
-                      <h3 className="text-base font-extrabold uppercase tracking-wide text-indigo-950">
-                        Final Executive Decision Required (Round {totalRounds} of {totalRounds} Completed)
-                      </h3>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-600">
-                      All {totalRounds} rounds of negotiation have concluded. Government, NGO, and District Administration have presented their final evaluations. As lead coordinator, select the final outcome:
-                    </p>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-indigo-100 border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-800 uppercase tracking-wider">
-                    Executive Decision
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* ACCEPT */}
-                  <button
-                    type="button"
-                    onClick={() => handleFinalDecisionAction('accept')}
-                    disabled={loading}
-                    className="flex flex-col items-start p-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 hover:border-emerald-500 transition shadow-xs text-left group disabled:opacity-50"
-                  >
-                    <div className="flex items-center gap-2 mb-1.5 text-emerald-800 font-extrabold text-sm group-hover:text-emerald-900">
-                      <span className="p-1 rounded-md bg-emerald-200 text-emerald-900"><Check size={16} /></span>
-                      Accept Agreement
-                    </div>
-                    <p className="text-xs text-emerald-700 leading-relaxed">
-                      Ratify the resource allocation and conclude the negotiation with official multi-agency agreement.
-                    </p>
-                  </button>
-
-                  {/* REJECT */}
-                  <button
-                    type="button"
-                    onClick={() => handleFinalDecisionAction('reject')}
-                    disabled={loading}
-                    className="flex flex-col items-start p-4 rounded-xl border-2 border-rose-300 bg-rose-50/80 hover:bg-rose-100 hover:border-rose-500 transition shadow-xs text-left group disabled:opacity-50"
-                  >
-                    <div className="flex items-center gap-2 mb-1.5 text-rose-800 font-extrabold text-sm group-hover:text-rose-900">
-                      <span className="p-1 rounded-md bg-rose-200 text-rose-900"><X size={16} /></span>
-                      Reject & Walk Away
-                    </div>
-                    <p className="text-xs text-rose-700 leading-relaxed">
-                      Reject the final allocation and record a negotiation breakdown / deadlock.
-                    </p>
-                  </button>
-
-                  {/* RESET */}
-                  <button
-                    type="button"
-                    onClick={() => handleFinalDecisionAction('reset')}
-                    disabled={loading}
-                    className="flex flex-col items-start p-4 rounded-xl border-2 border-slate-300 bg-slate-50/90 hover:bg-slate-100 hover:border-slate-500 transition shadow-xs text-left group disabled:opacity-50"
-                  >
-                    <div className="flex items-center gap-2 mb-1.5 text-slate-800 font-extrabold text-sm group-hover:text-slate-900">
-                      <span className="p-1 rounded-md bg-slate-200 text-slate-900"><RotateCcw size={16} /></span>
-                      Reset Negotiation
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Reset round counter and start a fresh practice negotiation from Round 1.
-                    </p>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* CURRENT AI PROPOSALS (ROUND X) */}
-            {getLatestAiProposals().length > 0 && status === 'Your turn' && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-indigo-600" />
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                      Current AI Proposals (Positions to Evaluate)
-                    </h4>
-                  </div>
-                  <span className="text-[11px] text-slate-500">
-                    Click &ldquo;Copy to My Allocation&rdquo; to start from any agent&rsquo;s proposal
-                  </span>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  {getLatestAiProposals().map((aiProp) => {
-                    const style = getPracticeAgentStyle(aiProp.sender);
-                    return (
-                      <div
-                        key={aiProp.sender}
-                        className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-slate-300 transition"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
-                              <span className={`text-xs font-bold ${style.text}`}>
-                                {aiProp.sender}
-                              </span>
-                            </div>
-                            {aiProp.action && (
-                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${getPracticeActionStyle(aiProp.action)}`}>
-                                {aiProp.action}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="space-y-1.5 my-2">
-                            {Object.entries(aiProp.proposal || {}).map(([dist, alloc]) => (
-                              <div key={dist} className="rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600 flex items-center justify-between">
-                                <span className="font-medium text-slate-700 truncate max-w-[90px]">{dist}:</span>
-                                <span className="font-mono text-[10px] text-slate-500">
-                                  {resourceNames.map((r) => `${alloc?.[r] ?? 0} ${r.split(' ')[0]}`).join(' / ')}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCurrentProposal(JSON.parse(JSON.stringify(aiProp.proposal)));
-                            setAction('Counter Offer');
-                          }}
-                          className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 hover:border-slate-300 transition text-center"
-                        >
-                          📋 Copy to My Allocation
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* INTERACTIVE ALLOCATION MATRIX (THE CORE USER PROPOSAL TABLE) */}
+          {/* YOUR PROPOSAL / CONFIGURATION */}
+                      {/* INTERACTIVE ALLOCATION MATRIX (THE CORE USER PROPOSAL TABLE) */}
             {status === 'Your turn' && !awaitingFinalDecision && (() => {
               const activeProposal = (currentProposal && Object.keys(currentProposal).length > 0)
                 ? currentProposal
@@ -2121,6 +1942,136 @@ function PracticeMode() {
               );
             })()}
 
+
+
+
+
+          {/* INPUT AREA */}
+
+          <div className="border-t border-slate-200 p-6 space-y-6">
+
+            {/* YOUR TURN BANNER */}
+            {status === 'Your turn' && !awaitingFinalDecision && (
+              <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/95 via-blue-50/90 to-purple-50/95 p-5 shadow-xs">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-3 w-3 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
+                    </span>
+                    <span className="text-sm font-extrabold uppercase tracking-wider text-blue-950">
+                      {round === 1 ? 'ROUND 1 — INITIAL MASTER PROPOSAL' : `YOUR TURN — ROUND ${round} DECISION`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-blue-100/90 border border-blue-200/80 px-3 py-1 text-xs font-bold text-blue-800 uppercase tracking-wide">
+                      🟣 4th Negotiator (Human)
+                    </span>
+                    <span className="rounded-full bg-purple-100/90 border border-purple-200/80 px-3 py-1 text-xs font-semibold text-purple-800">
+                      Round {round} of {totalRounds}
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-slate-700">
+                  {round === 1 ? (
+                    <>You make the <strong>initial proposal</strong> for the negotiation. Allocate all resources across regions in the matrix below and submit. Government, NGO, and District Administration will each evaluate and respond in order.</>
+                  ) : (
+                    <>All 3 AI agency heads (<strong>🔵 Government</strong>, <strong>🟢 NGO</strong>, and <strong>🟠 District Administration</strong>) have responded to your previous proposal. Review their debate above, adjust allocations, and choose to <strong>Counter</strong>, <strong>Accept</strong>, or <strong>Reject</strong>.</>
+                  )}
+                </p>
+
+                <div className="mt-3.5 pt-3.5 border-t border-indigo-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="text-xs text-slate-600">
+                    <span className="font-bold text-indigo-900">💡 AI Assistant:</span> Unsure how to distribute? Click to auto-generate a balanced strategic allocation tailored to regional crisis severities.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGetSuggestion}
+                    disabled={loading || suggesting || status !== 'Your turn' || !sessionId}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-700 px-4 py-2 text-xs font-bold text-white shadow-md transition hover:from-indigo-700 hover:to-purple-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Sparkles size={15} className={suggesting ? 'animate-spin' : ''} />
+                    {suggesting ? 'Drafting Proposal...' : '✨ Autofill AI Suggestion'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* FINAL EXECUTIVE DECISION PANEL */}
+            {awaitingFinalDecision && (
+              <div className="rounded-2xl border-2 border-indigo-400 bg-gradient-to-br from-indigo-50/95 via-white to-blue-50/90 p-6 shadow-lg space-y-5 animate-fadeIn">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-indigo-100 pb-4">
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-3.5 w-3.5 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-indigo-600"></span>
+                      </span>
+                      <h3 className="text-base font-extrabold uppercase tracking-wide text-indigo-950">
+                        Final Executive Decision Required (Round {totalRounds} of {totalRounds} Completed)
+                      </h3>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">
+                      All {totalRounds} rounds of negotiation have concluded. Government, NGO, and District Administration have presented their final evaluations. As lead coordinator, select the final outcome:
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-indigo-100 border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-800 uppercase tracking-wider">
+                    Executive Decision
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* ACCEPT */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinalDecisionAction('accept')}
+                    disabled={loading}
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 hover:border-emerald-500 transition shadow-xs text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 text-emerald-800 font-extrabold text-sm group-hover:text-emerald-900">
+                      <span className="p-1 rounded-md bg-emerald-200 text-emerald-900"><Check size={16} /></span>
+                      Accept Agreement
+                    </div>
+                    <p className="text-xs text-emerald-700 leading-relaxed">
+                      Ratify the resource allocation and conclude the negotiation with official multi-agency agreement.
+                    </p>
+                  </button>
+
+                  {/* REJECT */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinalDecisionAction('reject')}
+                    disabled={loading}
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-rose-300 bg-rose-50/80 hover:bg-rose-100 hover:border-rose-500 transition shadow-xs text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 text-rose-800 font-extrabold text-sm group-hover:text-rose-900">
+                      <span className="p-1 rounded-md bg-rose-200 text-rose-900"><X size={16} /></span>
+                      Reject & Walk Away
+                    </div>
+                    <p className="text-xs text-rose-700 leading-relaxed">
+                      Reject the final allocation and record a negotiation breakdown / deadlock.
+                    </p>
+                  </button>
+
+                  {/* RESET */}
+                  <button
+                    type="button"
+                    onClick={() => handleFinalDecisionAction('reset')}
+                    disabled={loading}
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-slate-300 bg-slate-50/90 hover:bg-slate-100 hover:border-slate-500 transition shadow-xs text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 text-slate-800 font-extrabold text-sm group-hover:text-slate-900">
+                      <span className="p-1 rounded-md bg-slate-200 text-slate-900"><RotateCcw size={16} /></span>
+                      Reset Negotiation
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Reset round counter and start a fresh practice negotiation from Round 1.
+                    </p>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* RATIONALE & MESSAGE INPUT */}
             {status === 'Your turn' && (
               <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
@@ -2186,8 +2137,8 @@ function PracticeMode() {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center justify-between">
-                    <span>Why do you prefer this allocation? (Your statement to the AI agents)</span>
-                    <span className="text-[11px] font-normal text-slate-400">Communicates your rationale to the 3 agents</span>
+                    <span>Your Negotiation Message</span>
+                    <span className="text-[11px] font-normal text-slate-400">Explain your reasoning to the AI agents</span>
                   </label>
                   <textarea
                     rows={3}
@@ -2319,7 +2270,147 @@ function PracticeMode() {
 
         </section>
 
-        <aside className="space-y-6">
+        <aside className="space-y-6 xl:sticky xl:top-6">
+
+          {/* CONFIGURATION DETAILS */}
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Configuration</p>
+                <h3 className="mt-1 text-base font-bold text-slate-900">Scenario Details</h3>
+              </div>
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold uppercase text-blue-700">
+                Practice
+              </span>
+            </div>
+
+            <select
+              value={selectedScenario.id}
+              onChange={handleScenarioChange}
+              disabled={loading}
+              className="mt-4 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-100"
+            >
+              {scenarios.map((scenario) => (
+                <option key={scenario.id} value={scenario.id}>
+                  {scenario.title || scenario.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="mt-3 rounded-xl bg-blue-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">Your Role</p>
+              <p className="mt-1 text-sm font-bold text-slate-900">Human Participant</p>
+              <p className="mt-1.5 text-[11px] leading-5 text-slate-600">
+                {selectedScenario.agents?.[2]?.role ||
+                  selectedScenario.role ||
+                  'Relief Coordinator'}
+              </p>
+            </div>
+
+            <div className="mt-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Objective</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">
+                {selectedScenario.objective ||
+                  'Coordinate disaster relief resources fairly and efficiently.'}
+              </p>
+            </div>
+          </section>
+
+          {/* RESOURCE CONFIGURATION */}
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">Resources</p>
+                <h3 className="mt-1 text-base font-bold text-slate-900">Available Budget</h3>
+              </div>
+              <span className="text-[10px] font-semibold text-slate-400">Live</span>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {resourceNames.slice(0, 5).map((item) => (
+                <div
+                  key={item}
+                  className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5"
+                >
+                  <span className="text-xs font-semibold text-slate-700">{item}</span>
+                  <span className="font-mono text-xs font-bold text-slate-900">
+                    {scenarioResourceQuantities[item] ?? 0}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* CURRENT AI PROPOSALS */}
+                      {/* CURRENT AI PROPOSALS (ROUND X) */}
+            {getLatestAiProposals().length > 0 && status === 'Your turn' && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-indigo-600" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                      Current AI Proposals (Positions to Evaluate)
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Click &ldquo;Copy to My Allocation&rdquo; to start from any agent&rsquo;s proposal
+                  </span>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  {getLatestAiProposals().map((aiProp) => {
+                    const style = getPracticeAgentStyle(aiProp.sender);
+                    return (
+                      <div
+                        key={aiProp.sender}
+                        className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-slate-300 transition"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
+                              <span className={`text-xs font-bold ${style.text}`}>
+                                {aiProp.sender}
+                              </span>
+                            </div>
+                            {aiProp.action && (
+                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${getPracticeActionStyle(aiProp.action)}`}>
+                                {aiProp.action}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="space-y-1.5 my-2">
+                            {Object.entries(aiProp.proposal || {}).map(([dist, alloc]) => (
+                              <div key={dist} className="rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600 flex items-center justify-between">
+                                <span className="font-medium text-slate-700 truncate max-w-[90px]">{dist}:</span>
+                                <span className="font-mono text-[10px] text-slate-500">
+                                  {resourceNames.map((r) => `${alloc?.[r] ?? 0} ${r.split(' ')[0]}`).join(' / ')}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentProposal(JSON.parse(JSON.stringify(aiProp.proposal)));
+                            setAction('Counter Offer');
+                          }}
+                          className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 hover:border-slate-300 transition text-center"
+                        >
+                          📋 Copy to My Allocation
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+
+
           <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <h3 className="text-base font-semibold text-slate-800">Negotiation Progress</h3>
             <div className="mt-4 space-y-2 text-sm">
