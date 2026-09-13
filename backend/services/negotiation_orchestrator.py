@@ -1,6 +1,7 @@
 import asyncio
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from agents.government_agent import GovernmentAgent
@@ -20,6 +21,7 @@ from services.evaluation_engine import (
     _resource_priority,
     build_outcome_analysis,
 )
+from services.database import get_sessions_collection
 
 
 class NegotiationOrchestrator:
@@ -28,10 +30,67 @@ class NegotiationOrchestrator:
         self.sessions: Dict[str, Dict[str, Any]] = {}
 
     # =========================================================
+    # PERSISTENCE (MongoDB write-through mirror of `state`)
+    # =========================================================
+    # NOTE: `self.sessions[session_id]["agents"]` holds live agent
+    # objects (not JSON-serializable) and stays in-memory only — it is
+    # never written to Mongo. Only the `state` dict is persisted.
+
+    async def _persist_session(self, session_id: str) -> None:
+        collection = get_sessions_collection()
+        if collection is None:
+            # Not connected to Atlas (e.g. MONGODB_URI missing/unreachable).
+            # Fail soft so the in-memory negotiation flow keeps working.
+            return
+
+        entry = self.sessions.get(session_id)
+        if entry is None:
+            return
+
+        entry["state"]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            await collection.replace_one(
+                {"_id": session_id},
+                entry["state"],
+                upsert=True,
+            )
+        except Exception as exc:
+            print(f"MongoDB persist failed for session {session_id}: {exc}")
+
+    def _persist_session_fire_and_forget(self, session_id: str) -> None:
+        """Best-effort persistence for call sites that are still
+        synchronous (add_human_message, step_practice_round,
+        handle_final_decision).
+
+        - If called from inside a running event loop (e.g. the async
+          `/api/practice/stream-turn` route), schedules the write as a
+          background task instead of blocking the response.
+        - If called from a plain sync context (FastAPI runs `def` routes
+          in a worker thread with no running loop), runs it to
+          completion via asyncio.run(), same bridging pattern already
+          used by step() for _step_async.
+
+        Never raises — persistence must not break the negotiation flow.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        try:
+            if loop is not None:
+                loop.create_task(self._persist_session(session_id))
+            else:
+                asyncio.run(self._persist_session(session_id))
+        except Exception as exc:
+            print(f"MongoDB persist scheduling failed for session {session_id}: {exc}")
+
+    # =========================================================
     # CREATE SESSION
     # =========================================================
 
-    def create_session(
+    async def create_session(
         self,
         scenario: dict,
         agents_config: list,
@@ -143,6 +202,8 @@ class NegotiationOrchestrator:
         state = {
             "session_id": session_id,
 
+            "created_at": datetime.now(timezone.utc).isoformat(),
+
             "scenario": scenario or {},
 
             "resource_quantities": resource_quantities,
@@ -212,6 +273,8 @@ class NegotiationOrchestrator:
             "state": state,
             "agents": agents
         }
+
+        await self._persist_session(session_id)
 
         return session_id
 
@@ -438,8 +501,10 @@ class NegotiationOrchestrator:
 
         # In practice mode, the human speaks at the start of each round.
         # AI agents respond next in step_practice_round before round advances.
-        if state.get("practice_mode"):
+        if state.get("practice_mode") and not state.get("negotiation_ended"):
             state["status"] = "ongoing"
+
+        self._persist_session_fire_and_forget(session_id)
 
         return {
             "success": True,
@@ -1276,6 +1341,8 @@ class NegotiationOrchestrator:
 
             state["status"] = "ongoing"
 
+        await self._persist_session(session_id)
+
         return self._build_response(
             state,
             agent,
@@ -1479,6 +1546,8 @@ class NegotiationOrchestrator:
                 state["awaiting_final_decision"] = False
                 print(f"[PRACTICE] Round {state['current_round'] - 1} complete. Advanced to Round {state['current_round']}/{state['max_rounds']}.")
 
+        self._persist_session_fire_and_forget(session_id)
+
         return ai_responses
 
     # =========================================================
@@ -1566,6 +1635,8 @@ class NegotiationOrchestrator:
                 state["status"] = "ongoing"
                 state["awaiting_final_decision"] = False
                 print(f"[PRACTICE] Round {state['current_round'] - 1} complete. Advanced to Round {state['current_round']}/{state['max_rounds']}.")
+
+        await self._persist_session(session_id)
 
         final_state = self.get_state(session_id)
         yield {
@@ -1685,6 +1756,8 @@ class NegotiationOrchestrator:
             state["final_report"] = None
             state["awaiting_final_decision"] = False
             print("[PRACTICE] Negotiation session reset.")
+
+        self._persist_session_fire_and_forget(session_id)
 
         return state
 

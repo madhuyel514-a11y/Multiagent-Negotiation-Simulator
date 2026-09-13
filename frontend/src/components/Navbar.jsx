@@ -6,7 +6,8 @@ const links = [
   { to: '/scenarios', label: 'Scenarios' },
   { to: '/configure', label: 'Configure Agents' },
   { to: '/negotiation', label: 'Negotiation' },
-  { to: '/outcome', label: 'Outcome' }
+  { to: '/outcome', label: 'Outcome' },
+  { to: '/history', label: 'History' }
 ];
 
 function Navbar() {

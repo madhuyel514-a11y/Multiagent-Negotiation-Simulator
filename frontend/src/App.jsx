@@ -6,6 +6,7 @@ import ScenarioSelection from './pages/ScenarioSelection';
 import AgentConfiguration from './pages/AgentConfiguration';
 import NegotiationArena from './pages/NegotiationArena';
 import PracticeMode from './pages/PracticeMode';
+import History from './pages/History';
 import Outcome from './pages/Outcome';
 
 function App() {
@@ -39,6 +40,11 @@ function App() {
           <Route
             path="/outcome"
             element={<Outcome />}
+          />
+          
+          <Route
+            path="/history"
+            element={<History />}
           />
 
         </Routes>

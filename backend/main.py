@@ -21,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from services.negotiation_orchestrator import NegotiationOrchestrator
+from services.database import connect_to_mongo, close_mongo_connection
+from routes.history import router as history_router
 
 
 # =========================================================
@@ -47,10 +49,31 @@ app.add_middleware(
 
 
 # =========================================================
+# ROUTERS
+# =========================================================
+
+app.include_router(history_router)
+
+
+# =========================================================
 # ORCHESTRATOR
 # =========================================================
 
 orchestrator = NegotiationOrchestrator()
+
+
+# =========================================================
+# DATABASE LIFECYCLE
+# =========================================================
+
+@app.on_event("startup")
+async def on_startup():
+    await connect_to_mongo()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await close_mongo_connection()
 
 
 # =========================================================
@@ -110,10 +133,10 @@ def health():
 # =========================================================
 
 @app.post("/api/negotiation/start")
-def start_negotiation(body: StartRequest):
+async def start_negotiation(body: StartRequest):
 
     try:
-        session_id = orchestrator.create_session(
+        session_id = await orchestrator.create_session(
             scenario=body.scenario,
             agents_config=body.agents,
             config=body.config or {},
@@ -167,10 +190,10 @@ def negotiation_turn(body: TurnRequest):
 # =========================================================
 
 @app.post("/api/negotiation/reset")
-def reset_negotiation(body: StartRequest):
+async def reset_negotiation(body: StartRequest):
 
     try:
-        session_id = orchestrator.create_session(
+        session_id = await orchestrator.create_session(
             scenario=body.scenario,
             agents_config=body.agents,
             config=body.config or {},
@@ -198,13 +221,13 @@ def reset_negotiation(body: StartRequest):
 # =========================================================
 
 @app.post("/api/practice/start")
-def practice_start(body: StartRequest):
+async def practice_start(body: StartRequest):
     """
     Initializes Practice Mode where Human makes the initial proposal in Round 1,
     setting the stage for the AI agency heads (Government, NGO, District) to respond.
     """
     try:
-        session_id = orchestrator.create_session(
+        session_id = await orchestrator.create_session(
             scenario=body.scenario,
             agents_config=body.agents,
             config=body.config or {},
