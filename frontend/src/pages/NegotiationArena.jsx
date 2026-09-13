@@ -145,6 +145,44 @@ function displayBoolean(value) {
   return 'Not available';
 }
 
+function formatReportValue(value, indent = 0) {
+  const prefix = ' '.repeat(indent);
+
+  if (value === null || value === undefined || value === '') return `${prefix}Not available`;
+  if (typeof value !== 'object') return `${prefix}${String(value)}`;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${prefix}Not available`;
+    return value.map((item) => {
+      if (item && typeof item === 'object') {
+        return `${prefix}-\n${formatReportValue(item, indent + 2)}`;
+      }
+      return `${prefix}- ${String(item)}`;
+    }).join('\n');
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length === 0) return `${prefix}Not available`;
+  return entries.map(([key, nestedValue]) => {
+    if (nestedValue && typeof nestedValue === 'object') {
+      return `${prefix}${key}:\n${formatReportValue(nestedValue, indent + 2)}`;
+    }
+    return `${prefix}${key}: ${displayValue(nestedValue)}`;
+  }).join('\n');
+}
+
+function downloadTextFile(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ─────────────────────────────────────────────
 // Renders a proposal as clean chips — handles both
 // flat ({Food: 280}) and per-district nested
@@ -514,6 +552,122 @@ function NegotiationArena() {
     .find((entry) => entry?.parsed_proposal && Object.keys(entry.parsed_proposal).length > 0)
     ?.agent;
 
+  const hasCompletedNegotiationData =
+    (negotiationEnded || consensusReached) &&
+    (history.length > 0 || finalReport || finalAllocation);
+
+  const downloadTranscript = () => {
+    const scenarioTitle = scenario?.title || scenario?.name || 'Not available';
+    const finalStatus = finalReport?.status || status || 'Not available';
+    const transcriptLines = [
+      'DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM',
+      'NEGOTIATION TRANSCRIPT',
+      '',
+      `Scenario: ${scenarioTitle}`,
+      'Mode: AI vs AI Simulation',
+      `Negotiation status: ${finalStatus}`,
+      `Current/final round: ${currentRound || 'Not available'} / ${maxRounds || 'Not available'}`,
+      `Consensus: ${Math.round(Number(consensus || 0) * 100)}%`,
+      `Consensus reached: ${displayBoolean(consensusReached)}`,
+      `Accepted/agreed agents: ${acceptedNames.length > 0 ? acceptedNames.join(', ') : 'None recorded'}`,
+      '',
+      'COMPLETE CONVERSATION HISTORY',
+      '=============================',
+    ];
+
+    if (history.length === 0) {
+      transcriptLines.push('No conversation history recorded.');
+    } else {
+      history.forEach((entry, index) => {
+        transcriptLines.push(
+          '',
+          `Turn ${index + 1}`,
+          `Round: ${entry?.round ?? 'Not available'}`,
+          `Agent: ${entry?.agent || 'Not available'}`,
+          `Action: ${(entry?.action || 'Not available').toUpperCase()}`,
+          `Message: ${entry?.message || entry?.speech || 'Not available'}`,
+          `Reasoning: ${entry?.reasoning || 'Not available'}`,
+          'Proposal/allocation:',
+          formatReportValue(entry?.parsed_proposal),
+        );
+      });
+    }
+
+    transcriptLines.push(
+      '',
+      'FINAL RESULT',
+      '============',
+      `Final status: ${finalStatus}`,
+      'Final allocation:',
+      formatReportValue(finalAllocation || currentProposal),
+      `Consensus percentage/status: ${Math.round(Number(consensus || 0) * 100)}% / ${displayBoolean(consensusReached)}`,
+      `Accepted/agreed agents: ${acceptedNames.length > 0 ? acceptedNames.join(', ') : 'None recorded'}`,
+    );
+
+    downloadTextFile('ai-vs-ai-negotiation-transcript.txt', transcriptLines.join('\n'));
+  };
+
+  const downloadSummaryReport = () => {
+    const scenarioTitle = scenario?.title || scenario?.name || 'Not available';
+    const agreementTerms = outcomeAnalysis?.agreement_terms;
+    const concessionPatterns = outcomeAnalysis?.concession_patterns;
+    const concessionTimeline = outcomeAnalysis?.concession_timeline;
+    const agentPerformance = outcomeAnalysis?.agent_performance;
+    const actionCounts = outcomeAnalysis?.agent_action_counts || outcomeAnalysis?.action_counts;
+    const finalStatus = finalReport?.status || outcomeAnalysis?.status || status || 'Not available';
+    const summaryLines = [
+      'DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM',
+      'FINAL NEGOTIATION SUMMARY REPORT',
+      '',
+      `Scenario: ${scenarioTitle}`,
+      'Mode: AI vs AI Simulation',
+      `Negotiation status: ${finalStatus}`,
+      `Rounds used / max rounds: ${outcomeAnalysis?.rounds ?? currentRound ?? 'Not available'} / ${maxRounds || 'Not available'}`,
+      `Agreement round: ${agreementTerms?.agreement_round ?? 'Not available'}`,
+      `Consensus: ${Math.round(Number(consensus || 0) * 100)}% (${displayBoolean(consensusReached)})`,
+      '',
+      'FINAL RESOURCE ALLOCATION BY DISTRICT/RESOURCE',
+      '==============================================',
+      formatReportValue(finalAllocation || agreementTerms?.final_allocation || currentProposal),
+      '',
+      'PER-RESOURCE TOTALS',
+      '====================',
+      formatReportValue(agreementTerms?.per_resource_totals),
+      '',
+      'AGREEMENT TERMS',
+      '================',
+      formatReportValue(agreementTerms),
+      '',
+      'CONCESSION PATTERNS',
+      '====================',
+      formatReportValue(concessionPatterns),
+      '',
+      'CONCESSION TIMELINE',
+      '====================',
+      formatReportValue(concessionTimeline),
+      '',
+      'PER-AGENT PERFORMANCE / OBJECTIVE SATISFACTION',
+      '===============================================',
+      formatReportValue(agentPerformance),
+      '',
+      'AGENT ACTION COUNTS / CONCESSIONS',
+      '==================================',
+      formatReportValue(actionCounts),
+      '',
+      'LLM METRICS',
+      '===========',
+      formatReportValue(geminiMetrics),
+      '',
+      'FINAL OUTCOME / STATUS',
+      '=======================',
+      `Status: ${finalStatus}`,
+      `Outcome: ${outcomeAnalysis?.outcome || 'Not available'}`,
+      `Report message: ${finalReport?.message || 'Not available'}`,
+    ];
+
+    downloadTextFile('ai-vs-ai-negotiation-summary.txt', summaryLines.join('\n'));
+  };
+
   return (
     <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
       {/* ── Header ── */}
@@ -871,6 +1025,26 @@ function NegotiationArena() {
             >
               View outcome
             </button>
+            {hasCompletedNegotiationData && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={downloadTranscript}
+                  className="rounded-full border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                  title="Download the complete AI versus AI negotiation transcript"
+                >
+                  Download Transcript
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadSummaryReport}
+                  className="rounded-full bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
+                  title="Download the AI versus AI final negotiation summary"
+                >
+                  Download Summary
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl mb-2">
             <CheckCircle size={24} />

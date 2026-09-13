@@ -549,78 +549,86 @@ def _proposal_history_by_agent(state):
 
 
 def _concession_patterns(state, final_allocation, participants):
-    history_by_agent = _proposal_history_by_agent(state)
     agreement_reached = bool(state.get("consensus_reached"))
     accepted = state.get("accepted_proposals", {})
-    patterns = {}
+    patterns = {
+        agent: {
+            "increased": {},
+            "decreased": {},
+            "concession_count": 0,
+            "total_quantity_conceded": 0,
+            "made_first_concession": False,
+            "contributed_to_final_agreement": False,
+        }
+        for agent in participants
+    }
+    previous_proposal = None
+    last_proposal_by_agent = {}
+    first_concession_seen = False
+
+    for entry in state.get("history", []):
+        agent = entry.get("agent")
+        action = str(entry.get("action", "")).upper()
+        proposal = entry.get("parsed_proposal")
+        if (
+            agent not in patterns
+            or action not in ("OFFER", "COUNTER")
+            or not isinstance(proposal, dict)
+            or not proposal
+        ):
+            continue
+
+        if previous_proposal is not None:
+            increased, decreased = _proposal_delta(previous_proposal, proposal)
+            pattern = patterns[agent]
+            for resource, quantity in increased.items():
+                pattern["increased"][resource] = pattern["increased"].get(resource, 0) + quantity
+            for resource, quantity in decreased.items():
+                pattern["decreased"][resource] = pattern["decreased"].get(resource, 0) + quantity
+            if decreased:
+                pattern["concession_count"] += len(decreased)
+                pattern["total_quantity_conceded"] += sum(decreased.values())
+                if not first_concession_seen:
+                    pattern["made_first_concession"] = True
+                    first_concession_seen = True
+
+        previous_proposal = proposal
+        last_proposal_by_agent[agent] = proposal
 
     for agent in participants:
-        entries = history_by_agent.get(agent, [])
-        increased = {}
-        decreased = {}
-        concession_count = 0
-        total_conceded = 0
-        first_concession = False
-        first_change_seen = False
-
-        for previous_entry, current_entry in zip(entries, entries[1:]):
-            current_increased, current_decreased = _proposal_delta(
-                previous_entry["proposal"],
-                current_entry["proposal"],
-            )
-            for resource, quantity in current_increased.items():
-                increased[resource] = increased.get(resource, 0) + quantity
-            for resource, quantity in current_decreased.items():
-                decreased[resource] = decreased.get(resource, 0) + quantity
-                concession_count += 1
-                total_conceded += quantity
-                if not first_change_seen:
-                    first_concession = True
-            if current_increased or current_decreased:
-                first_change_seen = True
-
-        last_proposal = entries[-1]["proposal"] if entries else None
-        contributed = bool(
+        last_proposal = last_proposal_by_agent.get(agent)
+        patterns[agent]["contributed_to_final_agreement"] = bool(
             agreement_reached
-            and total_conceded > 0
+            and patterns[agent]["total_quantity_conceded"] > 0
             and (
                 accepted.get(agent) == final_allocation
                 or last_proposal == final_allocation
             )
         )
 
-        patterns[agent] = {
-            "increased": increased,
-            "decreased": decreased,
-            "concession_count": concession_count,
-            "total_quantity_conceded": total_conceded,
-            "made_first_concession": first_concession,
-            "contributed_to_final_agreement": contributed,
-        }
-
     return patterns
 
 
 def _concession_timeline(state):
     """Build chronological, per-agent proposal changes from negotiation history."""
-    previous_proposals = {}
+    previous_proposal = None
     timeline = []
 
     for entry in state.get("history", []):
         agent = entry.get("agent")
+        action = str(entry.get("action", "")).upper()
         proposal = entry.get("parsed_proposal")
         has_proposal = isinstance(proposal, dict) and bool(proposal)
-        previous = previous_proposals.get(agent) if agent else None
         increased = {}
         decreased = {}
 
-        if has_proposal and previous is not None:
-            increased, decreased = _proposal_delta(previous, proposal)
+        if has_proposal and action in ("OFFER", "COUNTER") and previous_proposal is not None:
+            increased, decreased = _proposal_delta(previous_proposal, proposal)
 
         timeline.append({
             "round": entry.get("round"),
             "agent": agent,
-            "action": str(entry.get("action", "")).upper(),
+            "action": action,
             "proposal": proposal if has_proposal else None,
             "proposal_changed": bool(increased or decreased),
             "increased": increased,
@@ -629,8 +637,8 @@ def _concession_timeline(state):
             "concession_quantity": sum(decreased.values()),
         })
 
-        if agent and has_proposal:
-            previous_proposals[agent] = proposal
+        if has_proposal and action in ("OFFER", "COUNTER"):
+            previous_proposal = proposal
 
     return timeline
 
