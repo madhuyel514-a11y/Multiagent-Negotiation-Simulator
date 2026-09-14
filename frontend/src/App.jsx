@@ -33,6 +33,11 @@ function App() {
           />
 
           <Route
+            path="/negotiation/replay"
+            element={<NegotiationArena />}
+          />
+
+          <Route
             path="/practice"
             element={<PracticeMode />}
           />

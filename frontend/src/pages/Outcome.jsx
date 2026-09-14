@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowUp, CheckCircle2, Clock3, Users, XCircle } from 'lucide-react';
+
+const API_BASE = 'http://127.0.0.1:8000';
 
 function formatValue(value) {
   return value === null || value === undefined || value === '' ? 'N/A' : String(value);
@@ -54,16 +57,53 @@ function ChangeList({ title, changes, positive }) {
 }
 
 function Outcome() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const historicalSessionId = new URLSearchParams(location.search).get('session_id');
   const [saved, setSaved] = useState(null);
+  const [loading, setLoading] = useState(Boolean(historicalSessionId));
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    if (historicalSessionId) {
+      let cancelled = false;
+
+      async function loadHistoricalOutcome() {
+        setLoading(true);
+        setError('');
+        try {
+          const response = await fetch(`${API_BASE}/api/history/${encodeURIComponent(historicalSessionId)}`);
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || 'Failed to load historical outcome.');
+          if (!cancelled) {
+            const session = data.session || {};
+            setSaved({
+              ...session,
+              final_report: session.final_report || null,
+              final_allocation: session.final_allocation || null,
+              history: session.history || [],
+            });
+          }
+        } catch (loadError) {
+          if (!cancelled) setError(loadError.message || 'Failed to load historical outcome.');
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      }
+
+      loadHistoricalOutcome();
+      return () => { cancelled = true; };
+    }
+
     try {
       const value = localStorage.getItem('negotiationOutcome');
       setSaved(value ? JSON.parse(value) : null);
+      setLoading(false);
     } catch {
       setSaved(null);
+      setLoading(false);
     }
-  }, []);
+  }, [historicalSessionId]);
 
   const analysis = saved?.final_report?.outcome_analysis || saved?.final_report || {};
   const terms = analysis.agreement_terms || {};
@@ -75,9 +115,26 @@ function Outcome() {
   const participants = Object.keys(performance).length > 0
     ? Object.keys(performance)
     : Array.from(new Set([
+      ...(saved?.agents || []).map((agent) => agent.name).filter(Boolean),
+      ...(saved?.practice_mode && saved?.history?.some((event) => event.agent === 'Human Participant') ? ['Human Participant'] : []),
       ...(terms.accepted_participants || []),
       ...timeline.map((event) => event.agent).filter(Boolean),
     ]));
+
+  if (loading) {
+    return <main className="rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">Loading negotiation outcome...</main>;
+  }
+
+  if (error) {
+    return (
+      <main className="space-y-4">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">{error}</div>
+        <button type="button" onClick={() => navigate(historicalSessionId ? `/negotiation/replay?session_id=${encodeURIComponent(historicalSessionId)}` : '/negotiation')} className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+          Back
+        </button>
+      </main>
+    );
+  }
 
   return (
     <main className="space-y-6">

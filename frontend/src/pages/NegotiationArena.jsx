@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Activity, CheckCircle, ClipboardList, Shield, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000';
@@ -331,6 +331,11 @@ function TranscriptEntry({ item, previousProposal, agentIndex }) {
 // ─────────────────────────────────────────────
 function NegotiationArena() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const replaySessionId = location.pathname === '/negotiation/replay'
+    ? location.state?.sessionId || new URLSearchParams(location.search).get('session_id')
+    : null;
+  const isReplay = Boolean(replaySessionId);
   const [scenario, setScenario] = useState(null);
   const [config, setConfig] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -346,6 +351,7 @@ function NegotiationArena() {
   const [currentProposal, setCurrentProposal] = useState(null);
   const [nextAgent, setNextAgent] = useState(null);
   const [finalReport, setFinalReport] = useState(null);
+  const [sessionTimestamp, setSessionTimestamp] = useState(null);
   const [status, setStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -355,6 +361,7 @@ function NegotiationArena() {
   const transcriptEndRef = useRef(null);
 
   useEffect(() => {
+    if (isReplay) return;
     try {
       const storedConfig = localStorage.getItem('negotiationConfig');
       const storedScenario = localStorage.getItem('selectedScenario');
@@ -367,7 +374,7 @@ function NegotiationArena() {
     } catch (error) {
       setApiError(`Local configuration error: ${error.message}`);
     }
-  }, []);
+  }, [isReplay]);
 
   // Auto-scroll transcript to bottom on new entries
   useEffect(() => {
@@ -378,24 +385,44 @@ function NegotiationArena() {
 
   const applyState = (data) => {
     const state = data?.state || data || {};
+    const storedReport = state.final_report ?? data?.final_report ?? null;
+    const storedOutcome = storedReport?.outcome_analysis || storedReport || {};
+    const storedAgreement = storedOutcome?.agreement_terms || {};
     if (data?.session_id) setSessionId(data.session_id);
+    setSessionTimestamp(state.updated_at ?? state.created_at ?? data?.updated_at ?? data?.created_at ?? null);
     setHistory(state.history || []);
     setCurrentRound(Number(state.current_round ?? data?.round ?? 1));
     setConsensus(Number(state.consensus ?? data?.consensus ?? 0));
-    setConsensusReached(Boolean(state.consensus_reached ?? data?.consensus_reached));
+    setConsensusReached(Boolean(
+      state.consensus_reached === true
+      || data?.consensus_reached === true
+      || storedReport?.consensus_reached === true
+      || storedAgreement.unanimous_agreement === true
+    ));
     setAgreedAgents(Number(state.agreed_agents ?? data?.agreed_agents ?? 0));
-    setTotalAgents(Number(state.total_agents ?? data?.total_agents ?? config?.agents?.length ?? 3));
-    setNegotiationEnded(Boolean(state.negotiation_ended ?? data?.negotiation_ended));
-    setFinalAllocation(state.final_allocation ?? data?.final_allocation ?? null);
+    setTotalAgents(Number(state.total_agents ?? data?.total_agents ?? state.agents?.length ?? config?.agents?.length ?? 3));
+    setNegotiationEnded(Boolean(
+      state.negotiation_ended === true
+      || data?.negotiation_ended === true
+      || (isReplay && ['agreement_reached', 'negotiation_breakdown', 'deadlock_no_consensus', 'max_rounds_reached'].includes(state.status))
+    ));
+    setFinalAllocation(
+      state.final_allocation
+      ?? data?.final_allocation
+      ?? storedReport?.final_allocation
+      ?? storedOutcome?.final_allocation
+      ?? storedAgreement.final_allocation
+      ?? null
+    );
     setCurrentProposal(state.current_proposal ?? data?.current_proposal ?? null);
     setNextAgent(state.next_agent ?? data?.next_agent ?? null);
-    setFinalReport(state.final_report ?? data?.final_report ?? null);
+    setFinalReport(storedReport);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
     if (data?.gemini_metrics) setGeminiMetrics(data.gemini_metrics);
 
-    const completedReport = state.final_report ?? data?.final_report;
-    if (completedReport || state.negotiation_ended || data?.negotiation_ended) {
+    const completedReport = storedReport;
+    if (!isReplay && (completedReport || state.negotiation_ended || data?.negotiation_ended)) {
       localStorage.setItem('negotiationOutcome', JSON.stringify({
         final_report: completedReport,
         final_allocation: state.final_allocation ?? data?.final_allocation ?? null,
@@ -407,6 +434,43 @@ function NegotiationArena() {
       }));
     }
   };
+
+  useEffect(() => {
+    if (!replaySessionId) return undefined;
+
+    let cancelled = false;
+
+    async function loadReplay() {
+      setLoading(true);
+      setApiError(null);
+      try {
+        const response = await fetch(`${API_BASE}/api/history/${replaySessionId}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Failed to load negotiation replay.');
+        if (cancelled) return;
+
+        const historicalState = data.session || {};
+        setScenario(historicalState.scenario || null);
+        setConfig({
+          agents: historicalState.agents || [],
+          max_rounds: historicalState.max_rounds,
+          resourceQuantities: historicalState.resource_quantities || {},
+        });
+        applyState({
+          session_id: replaySessionId,
+          state: historicalState,
+        });
+        setIsAutoRunning(false);
+      } catch (error) {
+        if (!cancelled) setApiError(error.message || 'Failed to load negotiation replay.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadReplay();
+    return () => { cancelled = true; };
+  }, [replaySessionId]);
 
   const startSession = async () => {
     if (!scenario || !config) return null;
@@ -432,6 +496,7 @@ function NegotiationArena() {
   };
 
   const runTurn = async () => {
+    if (isReplay) return;
     if (!scenario || !config) {
       setApiError('Select a scenario and configure the agents first.');
       return;
@@ -463,21 +528,22 @@ function NegotiationArena() {
   };
 
   useEffect(() => {
-    if (scenario && config && !startedRef.current) {
+    if (!isReplay && scenario && config && !startedRef.current) {
       startedRef.current = true;
       runTurn();
     }
-  }, [scenario, config]);
+  }, [isReplay, scenario, config]);
 
   useEffect(() => {
-    if (isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
+    if (!isReplay && isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
       runTurn();
     } else if (negotiationEnded || consensusReached) {
       setIsAutoRunning(false);
     }
-  }, [isAutoRunning, loading, negotiationEnded, consensusReached]);
+  }, [isReplay, isAutoRunning, loading, negotiationEnded, consensusReached]);
 
   const reset = async () => {
+    if (isReplay) return;
     if (!scenario || !config) return;
     setIsAutoRunning(false);
     setGeminiMetrics(INITIAL_GEMINI_METRICS);
@@ -525,6 +591,8 @@ function NegotiationArena() {
 
   const statusLabel = loading
     ? 'AI thinking...'
+    : isReplay
+      ? String(status || 'ongoing').replaceAll('_', ' ')
     : status === 'max_rounds_reached'
       ? 'Completed'
       : status === 'consensus_reached' || consensusReached
@@ -533,6 +601,11 @@ function NegotiationArena() {
 
   const progressPct = maxRounds > 0 ? Math.min(100, ((currentRound - 1) / maxRounds) * 100) : 0;
   const outcomeAnalysis = finalReport?.outcome_analysis;
+  const replayHasOutcome = isReplay && (
+    finalReport
+    || finalAllocation
+    || ['agreement_reached', 'negotiation_breakdown', 'deadlock_no_consensus', 'max_rounds_reached'].includes(status)
+  );
   const latestActions = getLatestAgentActions(history);
   const configuredAgents = config?.agents || [];
   const participantNames = configuredAgents.map((agent) => agent.name).filter(Boolean);
@@ -553,18 +626,22 @@ function NegotiationArena() {
     ?.agent;
 
   const hasCompletedNegotiationData =
-    (negotiationEnded || consensusReached) &&
+    !isReplay && (negotiationEnded || consensusReached) &&
     (history.length > 0 || finalReport || finalAllocation);
 
   const downloadTranscript = () => {
     const scenarioTitle = scenario?.title || scenario?.name || 'Not available';
+    const modeLabel = isReplay
+      ? (config?.agents?.some((agent) => agent.name === 'Human Participant') ? 'Human-vs-AI Practice Mode' : 'AI vs AI Simulation')
+      : 'AI vs AI Simulation';
     const finalStatus = finalReport?.status || status || 'Not available';
     const transcriptLines = [
       'DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM',
       'NEGOTIATION TRANSCRIPT',
       '',
       `Scenario: ${scenarioTitle}`,
-      'Mode: AI vs AI Simulation',
+      `Mode: ${modeLabel}`,
+      `Date/time: ${sessionTimestamp || 'Stored session timestamp not available'}`,
       `Negotiation status: ${finalStatus}`,
       `Current/final round: ${currentRound || 'Not available'} / ${maxRounds || 'Not available'}`,
       `Consensus: ${Math.round(Number(consensus || 0) * 100)}%`,
@@ -609,6 +686,9 @@ function NegotiationArena() {
 
   const downloadSummaryReport = () => {
     const scenarioTitle = scenario?.title || scenario?.name || 'Not available';
+    const modeLabel = isReplay
+      ? (history.some((entry) => entry?.agent === 'Human Participant') ? 'Human-vs-AI Practice Mode' : 'AI vs AI Simulation')
+      : 'AI vs AI Simulation';
     const agreementTerms = outcomeAnalysis?.agreement_terms;
     const concessionPatterns = outcomeAnalysis?.concession_patterns;
     const concessionTimeline = outcomeAnalysis?.concession_timeline;
@@ -620,7 +700,9 @@ function NegotiationArena() {
       'FINAL NEGOTIATION SUMMARY REPORT',
       '',
       `Scenario: ${scenarioTitle}`,
-      'Mode: AI vs AI Simulation',
+      `Date/time: ${sessionTimestamp || 'Stored session timestamp not available'}`,
+      `Mode: ${modeLabel}`,
+      `Participating agents: ${[...participantNames, ...(history.some((entry) => entry?.agent === 'Human Participant') ? ['Human Participant'] : [])].join(', ') || 'Not available'}`,
       `Negotiation status: ${finalStatus}`,
       `Rounds used / max rounds: ${outcomeAnalysis?.rounds ?? currentRound ?? 'Not available'} / ${maxRounds || 'Not available'}`,
       `Agreement round: ${agreementTerms?.agreement_round ?? 'Not available'}`,
@@ -668,14 +750,81 @@ function NegotiationArena() {
     downloadTextFile('ai-vs-ai-negotiation-summary.txt', summaryLines.join('\n'));
   };
 
+  const downloadFinalReport = () => {
+    const report = finalReport || {};
+    const reportAnalysis = report.outcome_analysis || outcomeAnalysis || {};
+    const reportTerms = reportAnalysis.agreement_terms || {};
+    const reportLines = [
+      'DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM',
+      'STORED NEGOTIATION FINAL REPORT',
+      '================================',
+      '',
+      `Scenario: ${scenario?.title || scenario?.name || 'Not available'}`,
+      `Mode: ${history.some((entry) => entry?.agent === 'Human Participant') ? 'Human-vs-AI Practice Mode' : 'AI vs AI Simulation'}`,
+      `Date/time: ${config?.updated_at || 'Stored session timestamp not available'}`,
+      `Status: ${report.status || status || 'Not available'}`,
+      `Consensus: ${Math.round(Number(consensus || 0) * 100)}%`,
+      `Consensus reached: ${displayBoolean(consensusReached)}`,
+      `Agreement round: ${reportTerms.agreement_round ?? 'Not available'}`,
+      '',
+      'INITIAL REQUIREMENTS / OPENING DEMANDS',
+      '=======================================',
+      formatReportValue(initialDemands),
+      '',
+      'NEGOTIATION HISTORY / TIMELINE',
+      '===============================',
+      formatReportValue(history),
+      '',
+      'FINAL ALLOCATION',
+      '=================',
+      formatReportValue(finalAllocation || report.final_allocation || reportAnalysis.final_allocation || reportTerms.final_allocation),
+      '',
+      'RESOURCE TOTALS',
+      '================',
+      formatReportValue(reportTerms.per_resource_totals),
+      '',
+      'OUTCOME ANALYSIS',
+      '================',
+      formatReportValue(reportAnalysis),
+      '',
+      'AGENT INFORMATION',
+      '==================',
+      formatReportValue(config?.agents || []),
+      '',
+      'FINAL REPORT MESSAGE',
+      '=====================',
+      report.message || 'No stored final report message.',
+    ];
+
+    downloadTextFile('historical-negotiation-final-report.txt', reportLines.join('\n'));
+  };
+
   return (
     <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
       {/* ── Header ── */}
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-semibold text-slate-800 sm:text-4xl">Negotiation Arena</h1>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <h1 className="text-3xl font-semibold text-slate-800 sm:text-4xl">
+            {isReplay ? 'Negotiation Arena Replay' : 'Negotiation Arena'}
+          </h1>
+          {isReplay && (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-600">
+              Read-only replay
+            </span>
+          )}
+        </div>
         <p className="mx-auto mt-3 max-w-2xl text-base text-slate-500 sm:text-lg">
-          Observe each AI agent negotiate in their own voice — round by round.
+          {isReplay ? 'Review the stored negotiation exactly as it happened, round by round.' : 'Observe each AI agent negotiate in their own voice — round by round.'}
         </p>
+        {isReplay && (
+          <button
+            type="button"
+            onClick={() => navigate('/history')}
+            className="mt-4 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
+          >
+            Back to History
+          </button>
+        )}
         <div className="mt-4 flex justify-center gap-3 flex-wrap">
           <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
             Round {currentRound || 1} / {maxRounds}
@@ -755,30 +904,36 @@ function NegotiationArena() {
           <div className="mt-3 text-sm text-slate-500">
             Agents Agreed: <span className="font-semibold text-slate-700">{agreedAgents} / {totalAgents || participantNames.length}</span>
           </div>
-          <div className="mt-3 flex gap-2 flex-wrap">
-            <button
-              onClick={runTurn}
-              disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
-              className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-blue-700 transition-colors"
-            >
-              {loading && !isAutoRunning ? 'Thinking...' : 'Next Turn'}
-            </button>
-            <button
-              onClick={() => setIsAutoRunning(!isAutoRunning)}
-              disabled={negotiationEnded || consensusReached}
-              className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${isAutoRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'
-                }`}
-            >
-              {isAutoRunning ? 'Stop Auto' : 'Auto Run'}
-            </button>
-            <button
-              onClick={reset}
-              disabled={loading}
-              className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-amber-600 transition-colors"
-            >
-              Reset
-            </button>
-          </div>
+          {isReplay ? (
+            <p className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-500">
+              Historical session. Controls are disabled.
+            </p>
+          ) : (
+            <div className="mt-3 flex gap-2 flex-wrap">
+              <button
+                onClick={runTurn}
+                disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
+                className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-blue-700 transition-colors"
+              >
+                {loading && !isAutoRunning ? 'Thinking...' : 'Next Turn'}
+              </button>
+              <button
+                onClick={() => setIsAutoRunning(!isAutoRunning)}
+                disabled={negotiationEnded || consensusReached}
+                className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${isAutoRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'
+                  }`}
+              >
+                {isAutoRunning ? 'Stop Auto' : 'Auto Run'}
+              </button>
+              <button
+                onClick={reset}
+                disabled={loading}
+                className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-amber-600 transition-colors"
+              >
+                Reset
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1011,7 +1166,7 @@ function NegotiationArena() {
       </div>
 
       {/* ── Final Report ── */}
-      {(consensusReached || negotiationEnded) && (
+      {(consensusReached || negotiationEnded || replayHasOutcome) && (
         <div className="mt-8 rounded-[1.75rem] bg-emerald-50/80 p-6 sm:p-8">
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1020,29 +1175,40 @@ function NegotiationArena() {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/outcome')}
+              onClick={() => navigate(isReplay && replaySessionId ? `/outcome?session_id=${encodeURIComponent(replaySessionId)}` : '/outcome')}
               className="rounded-full bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
             >
               View outcome
             </button>
-            {hasCompletedNegotiationData && (
+            {(hasCompletedNegotiationData || replayHasOutcome) && (
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={downloadTranscript}
-                  className="rounded-full border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
-                  title="Download the complete AI versus AI negotiation transcript"
-                >
-                  Download Transcript
-                </button>
                 <button
                   type="button"
                   onClick={downloadSummaryReport}
                   className="rounded-full bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
-                  title="Download the AI versus AI final negotiation summary"
+                  title={isReplay ? 'Download the stored historical negotiation summary' : 'Download the AI versus AI final negotiation summary'}
                 >
                   Download Summary
                 </button>
+                {isReplay ? (
+                  <button
+                    type="button"
+                    onClick={downloadFinalReport}
+                    className="rounded-full border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                    title="Download the complete stored historical final report"
+                  >
+                    Download Final Report
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={downloadTranscript}
+                    className="rounded-full border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                    title="Download the complete AI versus AI negotiation transcript"
+                  >
+                    Download Transcript
+                  </button>
+                )}
               </div>
             )}
           </div>
