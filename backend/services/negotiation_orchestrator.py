@@ -1225,6 +1225,7 @@ class NegotiationOrchestrator:
             state["final_allocation"] = dict(current_proposal)
             state["status"] = "agreement_reached"
             state["final_report"] = self._build_final_report(state)
+            await self._persist_session(session_id)
             print(f"[CONSENSUS] final_allocation={state['final_allocation']}")
             print("[TERMINATION] reason=consensus")
 
