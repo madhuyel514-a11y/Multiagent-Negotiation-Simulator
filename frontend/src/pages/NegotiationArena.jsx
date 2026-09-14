@@ -1,64 +1,57 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Activity, CheckCircle, ClipboardList, Shield, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
 // ─────────────────────────────────────────────
-// Agent colour palette
+// Agent colour palette — uses CSS vars for dark/light
 // ─────────────────────────────────────────────
 const AGENT_STYLES = {
   government: {
-    bg: 'bg-blue-50',
-    border: 'border-blue-200',
-    badge: 'bg-blue-700 text-white',
-    dot: 'bg-blue-600',
-    label: 'text-blue-800',
-    chip: 'bg-blue-100 text-blue-800',
-    headerBg: 'bg-blue-600',
-    headerText: 'text-white',
-    tagBg: 'bg-blue-100 text-blue-700',
+    color: 'var(--gov-color)',
+    bg: 'var(--gov-bg)',
+    border: 'var(--gov-border)',
+    header: 'var(--gov-header)',
+    dotClass: 'bg-blue-500',
   },
   ngo: {
-    bg: 'bg-emerald-50',
-    border: 'border-emerald-200',
-    badge: 'bg-emerald-700 text-white',
-    dot: 'bg-emerald-600',
-    label: 'text-emerald-800',
-    chip: 'bg-emerald-100 text-emerald-800',
-    headerBg: 'bg-emerald-600',
-    headerText: 'text-white',
-    tagBg: 'bg-emerald-100 text-emerald-700',
+    color: 'var(--ngo-color)',
+    bg: 'var(--ngo-bg)',
+    border: 'var(--ngo-border)',
+    header: 'var(--ngo-header)',
+    dotClass: 'bg-emerald-500',
   },
   district: {
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
-    badge: 'bg-purple-700 text-white',
-    dot: 'bg-purple-600',
-    label: 'text-purple-800',
-    chip: 'bg-purple-100 text-purple-800',
-    headerBg: 'bg-purple-600',
-    headerText: 'text-white',
-    tagBg: 'bg-purple-100 text-purple-700',
+    color: 'var(--dist-color)',
+    bg: 'var(--dist-bg)',
+    border: 'var(--dist-border)',
+    header: 'var(--dist-header)',
+    dotClass: 'bg-violet-500',
+  },
+  human: {
+    color: 'var(--human-color)',
+    bg: 'var(--human-bg)',
+    border: 'var(--human-border)',
+    header: 'var(--human-header)',
+    dotClass: 'bg-indigo-500',
   },
   default: {
-    bg: 'bg-slate-50',
-    border: 'border-slate-200',
-    badge: 'bg-slate-600 text-white',
-    dot: 'bg-slate-500',
-    label: 'text-slate-800',
-    chip: 'bg-slate-100 text-slate-700',
-    headerBg: 'bg-slate-600',
-    headerText: 'text-white',
-    tagBg: 'bg-slate-100 text-slate-600',
+    color: 'var(--accent)',
+    bg: 'var(--accent-bg)',
+    border: 'var(--accent-border)',
+    header: 'var(--accent)',
+    dotClass: 'bg-orange-500',
   },
 };
 
-const ACTION_STYLES = {
-  OFFER: { cls: 'bg-sky-100 text-sky-800', label: 'OFFER' },
-  COUNTER: { cls: 'bg-amber-100 text-amber-800', label: 'COUNTER' },
-  REJECT: { cls: 'bg-rose-100 text-rose-800', label: 'REJECT' },
-  ACCEPT: { cls: 'bg-emerald-100 text-emerald-800', label: 'ACCEPTS' },
+// Action badge colours — semantic, same in both modes
+const ACTION_COLORS = {
+  OFFER:   { bg: 'rgba(96,165,250,0.15)',  color: '#60a5fa', label: 'OFFER' },
+  COUNTER: { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c', label: 'COUNTER' },
+  REJECT:  { bg: 'rgba(248,113,113,0.15)', color: '#f87171', label: 'REJECT' },
+  ACCEPT:  { bg: 'rgba(52,211,153,0.15)',  color: '#34d399', label: 'ACCEPTS' },
+  SPEAK:   { bg: 'rgba(148,163,184,0.15)', color: '#94a3b8', label: 'SPEAK' },
 };
 
 const INITIAL_GEMINI_METRICS = {
@@ -70,32 +63,17 @@ const INITIAL_GEMINI_METRICS = {
   average_latency: 0,
 };
 
-const FALLBACK_AGENT_STYLES = [
-  AGENT_STYLES.government,
-  AGENT_STYLES.ngo,
-  {
-    bg: 'bg-violet-50',
-    border: 'border-violet-200',
-    badge: 'bg-violet-700 text-white',
-    dot: 'bg-violet-600',
-    label: 'text-violet-800',
-    chip: 'bg-violet-100 text-violet-800',
-    headerBg: 'bg-violet-600',
-    headerText: 'text-white',
-    tagBg: 'bg-violet-100 text-violet-700',
-  },
-];
-
-function getAgentStyle(agentName, agentIndex = 0) {
+function getAgentStyle(agentName) {
   const n = (agentName || '').toLowerCase();
   if (n.includes('government')) return AGENT_STYLES.government;
-  if (n.includes('ngo')) return AGENT_STYLES.ngo;
-  if (n.includes('district')) return AGENT_STYLES.district;
-  return FALLBACK_AGENT_STYLES[agentIndex % FALLBACK_AGENT_STYLES.length] || AGENT_STYLES.default;
+  if (n.includes('ngo'))        return AGENT_STYLES.ngo;
+  if (n.includes('district'))   return AGENT_STYLES.district;
+  if (n.includes('you') || n.includes('human')) return AGENT_STYLES.human;
+  return AGENT_STYLES.default;
 }
 
-function getActionStyle(action) {
-  return ACTION_STYLES[(action || '').toUpperCase()] || { cls: 'bg-slate-100 text-slate-700', label: action || 'SPEAK' };
+function getActionColor(action) {
+  return ACTION_COLORS[(action || '').toUpperCase()] || ACTION_COLORS.SPEAK;
 }
 
 function flattenProposal(proposal, prefix = '') {
@@ -188,9 +166,9 @@ function downloadTextFile(filename, content) {
 // flat ({Food: 280}) and per-district nested
 // ({ "Riverbend District": { Food: 280, ... } }) shapes
 // ─────────────────────────────────────────────
-function AllocationBreakdown({ proposal, style }) {
+function AllocationBreakdown({ proposal, agentStyle }) {
   if (!proposal || Object.keys(proposal).length === 0) return null;
-
+  const s = agentStyle || AGENT_STYLES.default;
   const isNested = Object.values(proposal).some(
     (v) => v && typeof v === 'object' && !Array.isArray(v)
   );
@@ -199,7 +177,8 @@ function AllocationBreakdown({ proposal, style }) {
     return (
       <div className="flex flex-wrap gap-1.5">
         {Object.entries(proposal).map(([resource, amount]) => (
-          <span key={resource} className={`text-xs font-semibold rounded-full px-3 py-1 ${style.chip}`}>
+          <span key={resource} className="badge"
+            style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
             {resource}: {amount}
           </span>
         ))}
@@ -210,11 +189,13 @@ function AllocationBreakdown({ proposal, style }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {Object.entries(proposal).map(([area, resources]) => (
-        <div key={area} className="rounded-xl bg-white border border-slate-200 p-3">
-          <p className="text-xs font-bold text-slate-700 mb-2">{area}</p>
+        <div key={area} className="rounded-xl p-3"
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+          <p className="text-xs font-bold mb-2" style={{ color: s.color }}>{area}</p>
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(resources).map(([resource, amount]) => (
-              <span key={resource} className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${style.chip}`}>
+              <span key={resource} className="badge text-[11px]"
+                style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
                 {resource}: {amount}
               </span>
             ))}
@@ -225,29 +206,22 @@ function AllocationBreakdown({ proposal, style }) {
   );
 }
 
-// Cuts the narrative message off right before the raw
-// "X District Allocation: Food: N units..." text starts,
-// since that part is now shown as structured chips instead.
 function splitMessage(message) {
   if (!message) return { summary: '', full: '', hasMore: false };
   const cutMatch = message.match(/\b[A-Z][A-Za-z\s]+ Allocation:/);
   if (cutMatch && cutMatch.index > 20) {
-    return {
-      summary: message.slice(0, cutMatch.index).trim(),
-      full: message,
-      hasMore: true,
-    };
+    return { summary: message.slice(0, cutMatch.index).trim(), full: message, hasMore: true };
   }
   return { summary: message, full: message, hasMore: false };
 }
 
 // ─────────────────────────────────────────────
-// Single transcript entry card
+// Single transcript entry card — fully theme-aware
 // ─────────────────────────────────────────────
-function TranscriptEntry({ item, previousProposal, agentIndex }) {
+function TranscriptEntry({ item, previousProposal }) {
   const [expanded, setExpanded] = useState(false);
-  const style = getAgentStyle(item.agent, agentIndex);
-  const actionStyle = getActionStyle(item.action);
+  const s = getAgentStyle(item.agent);
+  const ac = getActionColor(item.action);
   const hasProposal = item.parsed_proposal && Object.keys(item.parsed_proposal).length > 0;
   const changes = item.action?.toUpperCase() === 'COUNTER'
     ? getProposalChanges(item.parsed_proposal, previousProposal)
@@ -258,63 +232,76 @@ function TranscriptEntry({ item, previousProposal, agentIndex }) {
   const { summary, full, hasMore } = splitMessage(rawMessage);
 
   return (
-    <div className="relative pl-8">
-      <div className={`absolute left-0 top-5 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm ${style.dot}`} />
+    <div className="relative pl-8 animate-fade-in">
+      {/* Timeline dot */}
+      <div className="absolute left-0 top-5 h-3.5 w-3.5 rounded-full border-2 shadow-sm"
+        style={{ borderColor: 'var(--bg-surface)', background: s.color }} />
 
-      <div className="mb-2">
-        <span className="inline-block text-[11px] font-bold uppercase tracking-widest text-slate-400 select-none">
-          {roundLabel}
-        </span>
-      </div>
+      {/* Round label */}
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-widest select-none"
+        style={{ color: 'var(--text-3)' }}>
+        {roundLabel}
+      </p>
 
-      <div className={`rounded-2xl border ${style.border} ${style.bg} overflow-hidden shadow-sm`}>
-        <div className={`flex items-center gap-3 px-4 py-2.5 ${style.headerBg}`}>
-          <span className={`text-xs font-extrabold tracking-wider ${style.headerText} uppercase`}>
+      {/* Card */}
+      <div className="overflow-hidden rounded-xl shadow-sm"
+        style={{ background: s.bg, border: `1px solid ${s.border}` }}>
+
+        {/* Agent header strip */}
+        <div className="flex items-center gap-2 px-4 py-2.5"
+          style={{ background: s.header }}>
+          <span className="text-xs font-extrabold uppercase tracking-wider text-white">
             {item.agent || 'Agent'}
           </span>
-          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${actionStyle.cls}`}>
-            {actionStyle.label}
+          <span className="badge text-[10px] font-bold"
+            style={{ background: ac.bg, color: ac.color, border: `1px solid ${ac.color}40` }}>
+            {ac.label}
           </span>
           {item.stance && (
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/80">
-              {item.stance}
+            <span className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: 'rgba(255,255,255,0.7)' }}>
+              · {item.stance}
             </span>
           )}
         </div>
 
-        {/* Narrative message — trimmed of raw allocation text */}
+        {/* Message */}
         <div className="px-4 py-3">
-          <p className={`text-sm leading-relaxed ${style.label} font-medium`}>
-            {(expanded ? full : summary) || <em className="opacity-50">Waiting for response...</em>}
+          <p className="text-sm leading-relaxed font-medium" style={{ color: s.color }}>
+            {(expanded ? full : summary) || <em style={{ opacity: 0.45 }}>Waiting for response…</em>}
           </p>
           {hasMore && (
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="mt-1 text-xs font-semibold text-slate-400 hover:text-slate-600 underline"
-            >
+            <button onClick={() => setExpanded(!expanded)}
+              className="mt-1 text-xs font-semibold underline transition-opacity"
+              style={{ color: 'var(--text-3)' }}>
               {expanded ? 'Show less' : 'Show full statement'}
             </button>
           )}
         </div>
 
-        {/* Structured allocation — per-district cards or flat chips */}
+        {/* Allocation chips */}
         {hasProposal && (
           <div className="px-4 pb-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-3)' }}>
               Proposed Allocation
             </p>
-            <AllocationBreakdown proposal={item.parsed_proposal} style={style} />
+            <AllocationBreakdown proposal={item.parsed_proposal} agentStyle={s} />
           </div>
         )}
 
+        {/* Changes diff */}
         {changes.length > 0 && (
-          <div className="border-t border-slate-200/80 px-4 pb-3 pt-3">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          <div className="px-4 pb-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-3)' }}>
               What Changed
             </p>
             <div className="grid gap-1 sm:grid-cols-2">
               {changes.map(({ path, from, to, change }) => (
-                <div key={path} className={`rounded-lg px-2.5 py-1.5 text-xs ${change > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}`}>
+                <div key={path} className="rounded-lg px-2.5 py-1.5 text-xs"
+                  style={{
+                    background: change > 0 ? 'rgba(52,211,153,0.1)' : 'rgba(251,146,60,0.1)',
+                    color: change > 0 ? '#34d399' : '#fb923c',
+                  }}>
                   <span className="font-medium">{path}</span>
                   <span className="ml-2 font-semibold">{from} → {to} {change > 0 ? `↑ +${change}` : `↓ ${change}`}</span>
                 </div>
@@ -331,11 +318,6 @@ function TranscriptEntry({ item, previousProposal, agentIndex }) {
 // ─────────────────────────────────────────────
 function NegotiationArena() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const replaySessionId = location.pathname === '/negotiation/replay'
-    ? location.state?.sessionId || new URLSearchParams(location.search).get('session_id')
-    : null;
-  const isReplay = Boolean(replaySessionId);
   const [scenario, setScenario] = useState(null);
   const [config, setConfig] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -351,7 +333,6 @@ function NegotiationArena() {
   const [currentProposal, setCurrentProposal] = useState(null);
   const [nextAgent, setNextAgent] = useState(null);
   const [finalReport, setFinalReport] = useState(null);
-  const [sessionTimestamp, setSessionTimestamp] = useState(null);
   const [status, setStatus] = useState('idle');
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -361,7 +342,6 @@ function NegotiationArena() {
   const transcriptEndRef = useRef(null);
 
   useEffect(() => {
-    if (isReplay) return;
     try {
       const storedConfig = localStorage.getItem('negotiationConfig');
       const storedScenario = localStorage.getItem('selectedScenario');
@@ -374,7 +354,7 @@ function NegotiationArena() {
     } catch (error) {
       setApiError(`Local configuration error: ${error.message}`);
     }
-  }, [isReplay]);
+  }, []);
 
   // Auto-scroll transcript to bottom on new entries
   useEffect(() => {
@@ -385,44 +365,24 @@ function NegotiationArena() {
 
   const applyState = (data) => {
     const state = data?.state || data || {};
-    const storedReport = state.final_report ?? data?.final_report ?? null;
-    const storedOutcome = storedReport?.outcome_analysis || storedReport || {};
-    const storedAgreement = storedOutcome?.agreement_terms || {};
     if (data?.session_id) setSessionId(data.session_id);
-    setSessionTimestamp(state.updated_at ?? state.created_at ?? data?.updated_at ?? data?.created_at ?? null);
     setHistory(state.history || []);
     setCurrentRound(Number(state.current_round ?? data?.round ?? 1));
     setConsensus(Number(state.consensus ?? data?.consensus ?? 0));
-    setConsensusReached(Boolean(
-      state.consensus_reached === true
-      || data?.consensus_reached === true
-      || storedReport?.consensus_reached === true
-      || storedAgreement.unanimous_agreement === true
-    ));
+    setConsensusReached(Boolean(state.consensus_reached ?? data?.consensus_reached));
     setAgreedAgents(Number(state.agreed_agents ?? data?.agreed_agents ?? 0));
-    setTotalAgents(Number(state.total_agents ?? data?.total_agents ?? state.agents?.length ?? config?.agents?.length ?? 3));
-    setNegotiationEnded(Boolean(
-      state.negotiation_ended === true
-      || data?.negotiation_ended === true
-      || (isReplay && ['agreement_reached', 'negotiation_breakdown', 'deadlock_no_consensus', 'max_rounds_reached'].includes(state.status))
-    ));
-    setFinalAllocation(
-      state.final_allocation
-      ?? data?.final_allocation
-      ?? storedReport?.final_allocation
-      ?? storedOutcome?.final_allocation
-      ?? storedAgreement.final_allocation
-      ?? null
-    );
+    setTotalAgents(Number(state.total_agents ?? data?.total_agents ?? config?.agents?.length ?? 3));
+    setNegotiationEnded(Boolean(state.negotiation_ended ?? data?.negotiation_ended));
+    setFinalAllocation(state.final_allocation ?? data?.final_allocation ?? null);
     setCurrentProposal(state.current_proposal ?? data?.current_proposal ?? null);
     setNextAgent(state.next_agent ?? data?.next_agent ?? null);
-    setFinalReport(storedReport);
+    setFinalReport(state.final_report ?? data?.final_report ?? null);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
     if (data?.gemini_metrics) setGeminiMetrics(data.gemini_metrics);
 
-    const completedReport = storedReport;
-    if (!isReplay && (completedReport || state.negotiation_ended || data?.negotiation_ended)) {
+    const completedReport = state.final_report ?? data?.final_report;
+    if (completedReport || state.negotiation_ended || data?.negotiation_ended) {
       localStorage.setItem('negotiationOutcome', JSON.stringify({
         final_report: completedReport,
         final_allocation: state.final_allocation ?? data?.final_allocation ?? null,
@@ -434,43 +394,6 @@ function NegotiationArena() {
       }));
     }
   };
-
-  useEffect(() => {
-    if (!replaySessionId) return undefined;
-
-    let cancelled = false;
-
-    async function loadReplay() {
-      setLoading(true);
-      setApiError(null);
-      try {
-        const response = await fetch(`${API_BASE}/api/history/${replaySessionId}`);
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Failed to load negotiation replay.');
-        if (cancelled) return;
-
-        const historicalState = data.session || {};
-        setScenario(historicalState.scenario || null);
-        setConfig({
-          agents: historicalState.agents || [],
-          max_rounds: historicalState.max_rounds,
-          resourceQuantities: historicalState.resource_quantities || {},
-        });
-        applyState({
-          session_id: replaySessionId,
-          state: historicalState,
-        });
-        setIsAutoRunning(false);
-      } catch (error) {
-        if (!cancelled) setApiError(error.message || 'Failed to load negotiation replay.');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    loadReplay();
-    return () => { cancelled = true; };
-  }, [replaySessionId]);
 
   const startSession = async () => {
     if (!scenario || !config) return null;
@@ -496,7 +419,6 @@ function NegotiationArena() {
   };
 
   const runTurn = async () => {
-    if (isReplay) return;
     if (!scenario || !config) {
       setApiError('Select a scenario and configure the agents first.');
       return;
@@ -528,22 +450,21 @@ function NegotiationArena() {
   };
 
   useEffect(() => {
-    if (!isReplay && scenario && config && !startedRef.current) {
+    if (scenario && config && !startedRef.current) {
       startedRef.current = true;
       runTurn();
     }
-  }, [isReplay, scenario, config]);
+  }, [scenario, config]);
 
   useEffect(() => {
-    if (!isReplay && isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
+    if (isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
       runTurn();
     } else if (negotiationEnded || consensusReached) {
       setIsAutoRunning(false);
     }
-  }, [isReplay, isAutoRunning, loading, negotiationEnded, consensusReached]);
+  }, [isAutoRunning, loading, negotiationEnded, consensusReached]);
 
   const reset = async () => {
-    if (isReplay) return;
     if (!scenario || !config) return;
     setIsAutoRunning(false);
     setGeminiMetrics(INITIAL_GEMINI_METRICS);
@@ -591,8 +512,6 @@ function NegotiationArena() {
 
   const statusLabel = loading
     ? 'AI thinking...'
-    : isReplay
-      ? String(status || 'ongoing').replaceAll('_', ' ')
     : status === 'max_rounds_reached'
       ? 'Completed'
       : status === 'consensus_reached' || consensusReached
@@ -601,11 +520,6 @@ function NegotiationArena() {
 
   const progressPct = maxRounds > 0 ? Math.min(100, ((currentRound - 1) / maxRounds) * 100) : 0;
   const outcomeAnalysis = finalReport?.outcome_analysis;
-  const replayHasOutcome = isReplay && (
-    finalReport
-    || finalAllocation
-    || ['agreement_reached', 'negotiation_breakdown', 'deadlock_no_consensus', 'max_rounds_reached'].includes(status)
-  );
   const latestActions = getLatestAgentActions(history);
   const configuredAgents = config?.agents || [];
   const participantNames = configuredAgents.map((agent) => agent.name).filter(Boolean);
@@ -626,22 +540,18 @@ function NegotiationArena() {
     ?.agent;
 
   const hasCompletedNegotiationData =
-    !isReplay && (negotiationEnded || consensusReached) &&
+    (negotiationEnded || consensusReached) &&
     (history.length > 0 || finalReport || finalAllocation);
 
   const downloadTranscript = () => {
     const scenarioTitle = scenario?.title || scenario?.name || 'Not available';
-    const modeLabel = isReplay
-      ? (config?.agents?.some((agent) => agent.name === 'Human Participant') ? 'Human-vs-AI Practice Mode' : 'AI vs AI Simulation')
-      : 'AI vs AI Simulation';
     const finalStatus = finalReport?.status || status || 'Not available';
     const transcriptLines = [
       'DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM',
       'NEGOTIATION TRANSCRIPT',
       '',
       `Scenario: ${scenarioTitle}`,
-      `Mode: ${modeLabel}`,
-      `Date/time: ${sessionTimestamp || 'Stored session timestamp not available'}`,
+      'Mode: AI vs AI Simulation',
       `Negotiation status: ${finalStatus}`,
       `Current/final round: ${currentRound || 'Not available'} / ${maxRounds || 'Not available'}`,
       `Consensus: ${Math.round(Number(consensus || 0) * 100)}%`,
@@ -686,9 +596,6 @@ function NegotiationArena() {
 
   const downloadSummaryReport = () => {
     const scenarioTitle = scenario?.title || scenario?.name || 'Not available';
-    const modeLabel = isReplay
-      ? (history.some((entry) => entry?.agent === 'Human Participant') ? 'Human-vs-AI Practice Mode' : 'AI vs AI Simulation')
-      : 'AI vs AI Simulation';
     const agreementTerms = outcomeAnalysis?.agreement_terms;
     const concessionPatterns = outcomeAnalysis?.concession_patterns;
     const concessionTimeline = outcomeAnalysis?.concession_timeline;
@@ -700,9 +607,7 @@ function NegotiationArena() {
       'FINAL NEGOTIATION SUMMARY REPORT',
       '',
       `Scenario: ${scenarioTitle}`,
-      `Date/time: ${sessionTimestamp || 'Stored session timestamp not available'}`,
-      `Mode: ${modeLabel}`,
-      `Participating agents: ${[...participantNames, ...(history.some((entry) => entry?.agent === 'Human Participant') ? ['Human Participant'] : [])].join(', ') || 'Not available'}`,
+      'Mode: AI vs AI Simulation',
       `Negotiation status: ${finalStatus}`,
       `Rounds used / max rounds: ${outcomeAnalysis?.rounds ?? currentRound ?? 'Not available'} / ${maxRounds || 'Not available'}`,
       `Agreement round: ${agreementTerms?.agreement_round ?? 'Not available'}`,
@@ -750,262 +655,134 @@ function NegotiationArena() {
     downloadTextFile('ai-vs-ai-negotiation-summary.txt', summaryLines.join('\n'));
   };
 
-  const downloadFinalReport = () => {
-    const report = finalReport || {};
-    const reportAnalysis = report.outcome_analysis || outcomeAnalysis || {};
-    const reportTerms = reportAnalysis.agreement_terms || {};
-    const reportLines = [
-      'DISASTER RELIEF RESOURCE NEGOTIATION SYSTEM',
-      'STORED NEGOTIATION FINAL REPORT',
-      '================================',
-      '',
-      `Scenario: ${scenario?.title || scenario?.name || 'Not available'}`,
-      `Mode: ${history.some((entry) => entry?.agent === 'Human Participant') ? 'Human-vs-AI Practice Mode' : 'AI vs AI Simulation'}`,
-      `Date/time: ${config?.updated_at || 'Stored session timestamp not available'}`,
-      `Status: ${report.status || status || 'Not available'}`,
-      `Consensus: ${Math.round(Number(consensus || 0) * 100)}%`,
-      `Consensus reached: ${displayBoolean(consensusReached)}`,
-      `Agreement round: ${reportTerms.agreement_round ?? 'Not available'}`,
-      '',
-      'INITIAL REQUIREMENTS / OPENING DEMANDS',
-      '=======================================',
-      formatReportValue(initialDemands),
-      '',
-      'NEGOTIATION HISTORY / TIMELINE',
-      '===============================',
-      formatReportValue(history),
-      '',
-      'FINAL ALLOCATION',
-      '=================',
-      formatReportValue(finalAllocation || report.final_allocation || reportAnalysis.final_allocation || reportTerms.final_allocation),
-      '',
-      'RESOURCE TOTALS',
-      '================',
-      formatReportValue(reportTerms.per_resource_totals),
-      '',
-      'OUTCOME ANALYSIS',
-      '================',
-      formatReportValue(reportAnalysis),
-      '',
-      'AGENT INFORMATION',
-      '==================',
-      formatReportValue(config?.agents || []),
-      '',
-      'FINAL REPORT MESSAGE',
-      '=====================',
-      report.message || 'No stored final report message.',
-    ];
-
-    downloadTextFile('historical-negotiation-final-report.txt', reportLines.join('\n'));
-  };
-
   return (
-    <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:p-10">
-      {/* ── Header ── */}
-      <div className="mb-8 text-center">
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          <h1 className="text-3xl font-semibold text-slate-800 sm:text-4xl">
-            {isReplay ? 'Negotiation Arena Replay' : 'Negotiation Arena'}
-          </h1>
-          {isReplay && (
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-slate-600">
-              Read-only replay
+    <div className="space-y-5 animate-fade-in">
+
+      {/* ── Status Bar ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl p-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="badge" style={{ background: 'var(--accent-bg)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
+            Round {currentRound || 1} / {maxRounds}
+          </span>
+          <span className={`badge ${consensusReached ? 'status-agreement' : negotiationEnded ? 'status-breakdown' : 'status-ongoing'}`}>
+            {consensusReached ? '✓ Agreement' : negotiationEnded ? 'No Consensus' : '⚡ Live'}
+          </span>
+          <span className="badge" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+            {acceptedNames.length}/{totalAgents || participantNames.length} accepted
+          </span>
+          {loading && (
+            <span className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-3)' }}>
+              <span className="flex gap-1">
+                <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+              </span>
+              AI thinking...
             </span>
           )}
         </div>
-        <p className="mx-auto mt-3 max-w-2xl text-base text-slate-500 sm:text-lg">
-          {isReplay ? 'Review the stored negotiation exactly as it happened, round by round.' : 'Observe each AI agent negotiate in their own voice — round by round.'}
-        </p>
-        {isReplay && (
-          <button
-            type="button"
-            onClick={() => navigate('/history')}
-            className="mt-4 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
-          >
-            Back to History
-          </button>
-        )}
-        <div className="mt-4 flex justify-center gap-3 flex-wrap">
-          <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
-            Round {currentRound || 1} / {maxRounds}
-          </span>
-          <span className={`rounded-full px-4 py-2 text-sm font-semibold ${consensusReached ? 'bg-emerald-100 text-emerald-800' : negotiationEnded ? 'bg-orange-100 text-orange-800' : 'bg-slate-100 text-slate-700'}`}>
-            {consensusReached ? '✓ Agreement reached' : negotiationEnded ? 'No consensus / deadlock' : 'Negotiation in progress'}
-          </span>
-          <span className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
-            Agents accepted {acceptedNames.length} / {totalAgents || participantNames.length}
-          </span>
-          <span
-            className={`rounded-full px-4 py-2 text-sm font-semibold ${loading
-                ? 'bg-amber-50 text-amber-700'
-                : consensusReached
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-slate-100 text-slate-600'
-              }`}
-          >
-            {statusLabel}
-          </span>
-        </div>
-        {nextAgent && !negotiationEnded && (
-          <p className="mt-3 text-sm font-medium text-slate-500">
-            Current speaker: <span className="font-semibold text-slate-700">{nextAgent}</span>
-          </p>
-        )}
-        {/* Round progress bar */}
-        <div className="mt-4 mx-auto max-w-sm h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-blue-500 transition-all duration-500"
-            style={{ width: `${progressPct}%` }}
-          />
+        {/* Round progress */}
+        <div className="flex items-center gap-3 min-w-[180px]">
+          <div className="progress-track h-1.5 flex-1">
+            <div className="progress-fill h-full transition-all duration-700" style={{ width: `${progressPct}%` }} />
+          </div>
+          <span className="text-[10px] font-medium" style={{ color: 'var(--text-3)' }}>{Math.round(progressPct)}%</span>
         </div>
       </div>
 
       {apiError && (
-        <div className="mb-6 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          Backend error: {apiError}
+        <div className="rounded-xl p-4 text-sm" style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>
+          {apiError}
         </div>
       )}
 
-      {/* ── Info row ── */}
-      <div className="grid gap-6 lg:grid-cols-3 mb-8">
-        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
-          <div className="flex items-center gap-2 text-slate-800">
-            <ClipboardList size={18} className="text-blue-600" />
-            <h2 className="text-base font-semibold">Scenario</h2>
-          </div>
-          <p className="mt-2 text-sm font-medium text-blue-600">{scenario?.title || 'No scenario selected'}</p>
-          <p className="mt-1 text-sm leading-6 text-slate-500">{scenario?.description || 'Choose a scenario first.'}</p>
+      {/* ── Controls Row ── */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Scenario info */}
+        <div className="card p-4">
+          <p className="section-title">Scenario</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>{scenario?.title || 'None selected'}</p>
+          <p className="mt-1 text-xs leading-5" style={{ color: 'var(--text-3)' }}>{scenario?.description?.slice(0, 80)}...</p>
         </div>
-
-        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
-          <div className="flex items-center gap-2 text-slate-800">
-            <Shield size={18} className="text-emerald-600" />
-            <h2 className="text-base font-semibold">Agent Personalities</h2>
-          </div>
-          <div className="mt-3 space-y-2">
+        {/* Agent personalities */}
+        <div className="card p-4">
+          <p className="section-title">Agent Personalities</p>
+          <div className="space-y-1.5">
             {(config?.agents || []).map((agent) => {
               const s = getAgentStyle(agent.name);
               return (
-                <div key={agent.id} className="rounded-2xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm flex items-center gap-2">
-                  <span className={`inline-block w-2 h-2 rounded-full ${s.dot}`} />
-                  {agent.name || `Agent ${agent.id}`}:
-                  <span className="font-semibold text-slate-800">{agent.personality}</span>
+                <div key={agent.id} className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-2)' }}>
+                  <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
+                  <span className="truncate">{agent.name}</span>
+                  <span className="ml-auto font-semibold" style={{ color: 'var(--text-1)' }}>{agent.personality}</span>
                 </div>
               );
             })}
           </div>
         </div>
-
-        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
-          <div className="flex items-center gap-2 text-slate-800">
-            <Activity size={18} className="text-amber-500" />
-            <h2 className="text-base font-semibold">Controls</h2>
+        {/* Controls */}
+        <div className="card p-4">
+          <p className="section-title">Controls</p>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={runTurn} disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
+              className="btn-accent flex items-center gap-1.5 px-4 py-2 text-xs disabled:opacity-40">
+              {loading && !isAutoRunning ? <><span className="flex gap-0.5"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></span> Thinking</> : 'Next Turn'}
+            </button>
+            <button onClick={() => setIsAutoRunning(!isAutoRunning)} disabled={negotiationEnded || consensusReached}
+              className="rounded-full px-4 py-2 text-xs font-semibold text-white transition-all disabled:opacity-40"
+              style={{ background: isAutoRunning ? '#ef4444' : '#10b981' }}>
+              {isAutoRunning ? 'Stop Auto' : 'Auto Run'}
+            </button>
+            <button onClick={reset} disabled={loading}
+              className="btn-ghost px-4 py-2 text-xs disabled:opacity-40">Reset</button>
           </div>
-          <div className="mt-3 text-sm text-slate-500">
-            Agents Agreed: <span className="font-semibold text-slate-700">{agreedAgents} / {totalAgents || participantNames.length}</span>
-          </div>
-          {isReplay ? (
-            <p className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-500">
-              Historical session. Controls are disabled.
-            </p>
-          ) : (
-            <div className="mt-3 flex gap-2 flex-wrap">
-              <button
-                onClick={runTurn}
-                disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
-                className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-blue-700 transition-colors"
-              >
-                {loading && !isAutoRunning ? 'Thinking...' : 'Next Turn'}
-              </button>
-              <button
-                onClick={() => setIsAutoRunning(!isAutoRunning)}
-                disabled={negotiationEnded || consensusReached}
-                className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${isAutoRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'
-                  }`}
-              >
-                {isAutoRunning ? 'Stop Auto' : 'Auto Run'}
-              </button>
-              <button
-                onClick={reset}
-                disabled={loading}
-                className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-amber-600 transition-colors"
-              >
-                Reset
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
       {/* ── Main content ── */}
-      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+      <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
 
         {/* ── Transcript ── */}
-        <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-          <div className="flex items-center gap-2 mb-6">
-            <Sparkles size={18} className="text-blue-600" />
-            <h2 className="text-xl font-semibold text-slate-800">Negotiation Transcript</h2>
-            <span className="ml-auto text-xs font-medium text-slate-400">{history.length} turns</span>
+        <div className="card p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Sparkles size={15} style={{ color: 'var(--accent)' }} />
+            <h2 className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>Negotiation Transcript</h2>
+            <span className="ml-auto badge" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>{history.length} turns</span>
           </div>
 
-          {/* Timeline */}
           <div className="relative">
-            {/* Vertical line */}
             {history.length > 0 && (
-              <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-slate-200 rounded-full" />
+              <div className="absolute left-[6px] top-0 bottom-0 w-0.5 rounded-full" style={{ background: 'var(--border)' }} />
             )}
 
-            <div className="space-y-6">
+            <div className="space-y-5">
               {history.length === 0 ? (
-                /* Placeholder skeleton */
-                <div className="pl-8 space-y-4">
-                  {['Government Agent', 'NGO Agent', 'District Administration Agent'].map((name) => {
-                    const s = getAgentStyle(name);
-                    return (
-                      <div key={name} className={`rounded-2xl border ${s.border} ${s.bg} p-4 opacity-50`}>
-                        <div className={`text-xs font-bold uppercase tracking-wider mb-2 ${s.label}`}>{name}</div>
-                        <p className="text-sm text-slate-400 italic">Waiting for negotiation to begin...</p>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-3">
+                  {[1,2,3].map((i) => <div key={i} className="skeleton h-20 rounded-xl" />)}
                 </div>
               ) : (
                 Object.entries(groupedHistory).map(([roundNumber, entries]) => (
-                  <section key={roundNumber} className="space-y-4">
-                    <div className="flex items-center gap-3 pt-2">
-                      <span className="text-xs font-extrabold uppercase tracking-widest text-slate-500">
-                        Round {roundNumber}
-                      </span>
-                      <div className="h-px flex-1 bg-slate-200" />
+                  <section key={roundNumber} className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>Round {roundNumber}</span>
+                      <div className="h-px flex-1" style={{ background: 'var(--border)' }} />
                     </div>
                     {entries.map(({ entry: item, index }) => {
-                      const previousProposal = history
-                        .slice(0, index)
-                        .reverse()
-                        .find((candidate) => candidate?.parsed_proposal && Object.keys(candidate.parsed_proposal).length > 0)
-                        ?.parsed_proposal;
+                      const previousProposal = history.slice(0, index).reverse().find((c) => c?.parsed_proposal && Object.keys(c.parsed_proposal).length > 0)?.parsed_proposal;
                       const agentIndex = participantNames.indexOf(item.agent);
                       return (
-                        <TranscriptEntry
-                          key={`${index}-${item.agent || ''}-${item.round}`}
-                          item={item}
-                          previousProposal={previousProposal}
-                          agentIndex={agentIndex < 0 ? 0 : agentIndex}
-                        />
+                        <TranscriptEntry key={`${index}-${item.agent || ''}-${item.round}`} item={item} previousProposal={previousProposal} />
                       );
                     })}
                   </section>
                 ))
               )}
 
-              {/* Loading pulse */}
               {loading && (
-                <div className="pl-8">
-                  <div className="absolute left-0 top-auto w-3.5 h-3.5 rounded-full border-2 border-white bg-blue-400 animate-pulse" />
-                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 animate-pulse">
-                    <div className="h-3 w-24 bg-blue-200 rounded mb-3" />
-                    <div className="h-2 w-full bg-blue-100 rounded mb-2" />
-                    <div className="h-2 w-3/4 bg-blue-100 rounded" />
+                <div className="pl-8 animate-fade-in">
+                  <div className="rounded-xl p-4" style={{ background: 'var(--accent-bg)', border: '1px solid var(--accent-border)' }}>
+                    <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--accent)' }}>
+                      <span className="flex gap-1"><span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/></span>
+                      {nextAgent || 'Agent'} is thinking...
+                    </div>
                   </div>
                 </div>
               )}
@@ -1016,52 +793,43 @@ function NegotiationArena() {
         </div>
 
         {/* ── Sidebar ── */}
-        <div className="space-y-6">
-          {/* Negotiation progress */}
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">Negotiation Progress</h3>
-            <div className="space-y-2 text-sm">
+        <div className="space-y-4">
+          {/* Progress */}
+          <div className="card p-4">
+            <p className="section-title">Progress</p>
+            <div className="space-y-2">
               {[
                 ['Round', `${currentRound || 1} / ${maxRounds}`],
-                ['Agents Accepted', `${acceptedNames.length} / ${totalAgents || participantNames.length}`],
                 ['Proposals', proposalCount],
                 ['Counters', counterCount],
                 ['Agreement', consensusReached ? '✓ Reached' : negotiationEnded ? 'No consensus' : 'Pending'],
               ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
-                  <span className="text-slate-500">{label}</span>
-                  <span className="font-semibold text-slate-800">{value}</span>
+                <div key={label} className="flex items-center justify-between py-1.5 text-xs" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <span style={{ color: 'var(--text-3)' }}>{label}</span>
+                  <span className="font-semibold" style={{ color: 'var(--text-1)' }}>{value}</span>
                 </div>
               ))}
             </div>
-            <div className="mt-4 flex items-center justify-between rounded-xl bg-white px-3 py-3 shadow-sm">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Agents accepted</p>
-                <p className="mt-1 text-sm font-semibold text-slate-800">{acceptedNames.length} / {totalAgents || participantNames.length}</p>
-              </div>
-              <div className="flex gap-1.5" aria-label={`${acceptedNames.length} agents accepted`}>
-                {participantNames.map((name, index) => (
-                  <span key={name} className={`h-3 w-3 rounded-full ${latestActions[name] === 'ACCEPT' ? getAgentStyle(name, index).dot : 'bg-slate-200'}`} />
-                ))}
-              </div>
-            </div>
           </div>
 
-          {/* Agent status */}
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">Agent Status</h3>
+          {/* Agent Status */}
+          <div className="card p-4">
+            <p className="section-title">Agent Status</p>
             <div className="space-y-2">
               {participantNames.map((name, index) => {
-                const agentStyle = getAgentStyle(name, index);
+                const s = getAgentStyle(name, index);
                 const accepted = latestActions[name] === 'ACCEPT';
+                const action = latestActions[name];
+                const actionColors = { ACCEPT: '#10b981', COUNTER: '#f97316', REJECT: '#ef4444', OFFER: '#60a5fa' };
+                const ac = actionColors[action] || 'var(--text-3)';
                 return (
-                  <div key={name} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
-                    <span className="flex min-w-0 items-center gap-2 text-slate-700">
-                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${agentStyle.dot}`} />
-                      <span className="truncate">{name}</span>
-                    </span>
-                    <span className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${accepted ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                      {accepted ? '✓ Accepted' : latestActions[name] ? 'Negotiating' : 'Pending'}
+                  <div key={name} className="flex items-center justify-between gap-2 rounded-xl p-2.5" style={{ background: 'var(--bg-surface-2)' }}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`h-2 w-2 flex-shrink-0 rounded-full ${s.dot}`} />
+                      <span className="truncate text-xs font-medium" style={{ color: 'var(--text-1)' }}>{name}</span>
+                    </div>
+                    <span className="badge text-[10px] flex-shrink-0" style={{ background: `${ac}18`, color: ac, border: `1px solid ${ac}40` }}>
+                      {action || 'Pending'}
                     </span>
                   </div>
                 );
@@ -1069,95 +837,45 @@ function NegotiationArena() {
             </div>
           </div>
 
-          {/* Current proposal */}
+          {/* Current Proposal */}
           {displayProposal && Object.keys(displayProposal).length > 0 && (
-            <div className="rounded-[1.75rem] border border-blue-200 bg-blue-50/60 p-6">
-              <h3 className="text-base font-semibold uppercase tracking-wider text-blue-900">
-                Current Proposal
-              </h3>
-              <p className="mt-1 text-xs text-blue-700">
-                {consensusReached ? 'Final agreed allocation' : `Proposed by: ${proposalSource || 'Not available'}`}
+            <div className="card p-4" style={{ borderColor: 'var(--accent-border)' }}>
+              <p className="section-title" style={{ color: 'var(--accent)' }}>Current Proposal</p>
+              <p className="mb-3 text-[10px]" style={{ color: 'var(--text-3)' }}>
+                {consensusReached ? 'Final agreed' : `By: ${proposalSource || 'N/A'}`}
               </p>
-              <div className="mt-4">
-                <AllocationBreakdown proposal={displayProposal} style={AGENT_STYLES.default} />
-              </div>
+              <AllocationBreakdown proposal={displayProposal} style={AGENT_STYLES.default} />
             </div>
           )}
 
           {/* Resources */}
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">Resources Available</h3>
-            <div className="space-y-2">
+          <div className="card p-4">
+            <p className="section-title">Available Resources</p>
+            <div className="space-y-1.5">
               {config?.resourceQuantities && Object.keys(config.resourceQuantities).length > 0 ? (
                 Object.entries(config.resourceQuantities).map(([resource, quantity]) => (
-                  <div key={resource} className="flex justify-between rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
-                    <span className="font-medium text-slate-700">{resource}</span>
-                    <span className="font-semibold text-blue-600">{quantity} units</span>
+                  <div key={resource} className="flex justify-between text-xs py-1" style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-2)' }}>
+                    <span>{resource}</span>
+                    <span className="font-bold" style={{ color: 'var(--accent)' }}>{quantity}</span>
                   </div>
                 ))
-              ) : (
-                <p className="text-sm text-slate-400">Loading resources...</p>
-              )}
+              ) : <p className="text-xs" style={{ color: 'var(--text-3)' }}>Loading...</p>}
             </div>
           </div>
 
-          {/* System Status */}
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">System Status</h3>
-            <div className="space-y-2">
+          {/* LLM Metrics */}
+          <div className="card p-4">
+            <p className="section-title">LLM Metrics</p>
+            <div className="space-y-1.5">
               {[
-                ['FastAPI Backend', 'Connected'],
-                ['Negotiation Orchestrator', sessionId ? 'Active' : 'Starting'],
-                ['LLM Provider', 'Configured'],
-                ['Evaluation Engine', 'Active'],
-              ].map(([name, value]) => (
-                <div key={name} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
-                  <span className="text-slate-600">{name}</span>
-                  <span className="rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 text-xs font-semibold">{value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* LLM metrics */}
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">LLM Metrics</h3>
-            <div className="space-y-2">
-              {[
-                ['API Requests', geminiMetrics.total_requests],
+                ['Requests', geminiMetrics.total_requests],
                 ['Input Tokens', geminiMetrics.total_input_tokens],
                 ['Output Tokens', geminiMetrics.total_output_tokens],
-                ['Total Tokens', geminiMetrics.total_tokens],
-                ['Average Latency', `${Number(geminiMetrics.average_latency || 0).toFixed(2)}s`],
-                ['Total API Latency', `${Number(geminiMetrics.total_latency || 0).toFixed(2)}s`],
+                ['Avg Latency', `${Number(geminiMetrics.average_latency || 0).toFixed(2)}s`],
               ].map(([name, value]) => (
-                <div key={name} className="flex items-center justify-between rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
-                  <span className="text-slate-600">{name}</span>
-                  <span className="font-semibold text-slate-800">{value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Agent legend */}
-          <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-base font-semibold text-slate-800 mb-4">Agent Legend</h3>
-            <div className="space-y-2">
-              {participantNames.map((name, index) => {
-                const style = getAgentStyle(name, index);
-                return (
-                  <div key={name} className="flex items-center gap-2 text-sm">
-                    <span className={`w-3 h-3 rounded-full ${style.dot}`} />
-                    <span className="text-slate-600">{name}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-4 space-y-1.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Action types</p>
-              {Object.entries(ACTION_STYLES).map(([key, val]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${val.cls}`}>{val.label}</span>
+                <div key={name} className="flex justify-between text-xs" style={{ color: 'var(--text-2)' }}>
+                  <span>{name}</span>
+                  <span className="font-semibold" style={{ color: 'var(--text-1)' }}>{value}</span>
                 </div>
               ))}
             </div>
@@ -1165,52 +883,23 @@ function NegotiationArena() {
         </div>
       </div>
 
-      {/* ── Final Report ── */}
-      {(consensusReached || negotiationEnded || replayHasOutcome) && (
-        <div className="mt-8 rounded-[1.75rem] bg-emerald-50/80 p-6 sm:p-8">
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      {/* ── Final Report Banner ── */}
+      {(consensusReached || negotiationEnded) && (
+        <div className="rounded-2xl p-5" style={{ background: consensusReached ? 'rgba(16,185,129,0.08)' : 'var(--bg-surface)', border: `1px solid ${consensusReached ? 'rgba(16,185,129,0.25)' : 'var(--border)'}` }}>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Outcome ready</p>
-              <p className="mt-1 text-sm text-emerald-800">Review the complete agreement and negotiation timeline.</p>
+              <p className="text-xs font-bold uppercase tracking-wider" style={{ color: consensusReached ? '#10b981' : 'var(--text-3)' }}>Outcome Ready</p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-2)' }}>Review the complete agreement and negotiation timeline.</p>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate(isReplay && replaySessionId ? `/outcome?session_id=${encodeURIComponent(replaySessionId)}` : '/outcome')}
-              className="rounded-full bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
-            >
-              View outcome
-            </button>
-            {(hasCompletedNegotiationData || replayHasOutcome) && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={downloadSummaryReport}
-                  className="rounded-full bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800"
-                  title={isReplay ? 'Download the stored historical negotiation summary' : 'Download the AI versus AI final negotiation summary'}
-                >
-                  Download Summary
-                </button>
-                {isReplay ? (
-                  <button
-                    type="button"
-                    onClick={downloadFinalReport}
-                    className="rounded-full border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
-                    title="Download the complete stored historical final report"
-                  >
-                    Download Final Report
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={downloadTranscript}
-                    className="rounded-full border border-emerald-700 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100"
-                    title="Download the complete AI versus AI negotiation transcript"
-                  >
-                    Download Transcript
-                  </button>
-                )}
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => navigate('/outcome')} className="btn-accent px-5 py-2 text-sm">View Outcome</button>
+              {hasCompletedNegotiationData && (
+                <>
+                  <button type="button" onClick={downloadTranscript} className="btn-ghost px-4 py-2 text-xs">Download Transcript</button>
+                  <button type="button" onClick={downloadSummaryReport} className="btn-ghost px-4 py-2 text-xs">Download Summary</button>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl mb-2">
             <CheckCircle size={24} />

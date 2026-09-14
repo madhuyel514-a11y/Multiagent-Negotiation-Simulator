@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Send,
@@ -1247,28 +1247,59 @@ function PracticeMode() {
       }
 
       if (decisionType === 'accept') {
-        setSessionStatus('Agreement reached');
-        setStatus('Negotiation complete');
-        setConsensus(1.0);
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: 'You',
-            text: 'I accept this consensus agreement and officially authorize final resource deployment.',
-            action: 'ACCEPT',
-            stance: 'accept',
-            round: totalRounds,
-            proposal: data?.final_allocation || currentProposal,
-          },
-        ]);
+        const isAgreement =
+          data?.status === 'agreement_reached' ||
+          data?.state?.status === 'agreement_reached' ||
+          data?.state?.consensus_reached === true;
+
+        const lastHist = data?.state?.history?.[data.state.history.length - 1];
+
+        if (isAgreement) {
+          setSessionStatus('Agreement reached');
+          setStatus('Negotiation complete');
+          setConsensus(1.0);
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: 'You',
+              text:
+                lastHist?.message ||
+                'As Crisis Coordinator, I have carefully reviewed the multi-agency compromises achieved across our deliberation rounds. This framework responsibly balances our critical priorities, protects high-severity populations, and ensures life-saving aid reaches every affected zone. With all 4 parties formally in unanimous acceptance, I officially sign off on this consensus agreement and authorize immediate mobilization and deployment of relief assets into the field.',
+              action: 'ACCEPT',
+              stance: 'accept',
+              round: totalRounds,
+              proposal: data?.final_allocation || currentProposal,
+            },
+          ]);
+        } else {
+          setSessionStatus('Deadlock');
+          setStatus('Negotiation ended');
+          setConsensus(data?.consensus ?? data?.state?.consensus ?? 0.65);
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: 'You',
+              text:
+                lastHist?.message ||
+                'Although I sought to finalize an agreement, unanimous consensus was not achieved because one or more agencies concluded with active counter-proposals rather than explicit acceptances. Because operational protocols require all 4 participating parties to accept, this negotiation terminates in an operational deadlock.',
+              action: 'DEADLOCK',
+              stance: 'deadlock',
+              round: totalRounds,
+              proposal: currentProposal,
+            },
+          ]);
+        }
       } else {
         setSessionStatus('Deadlock');
         setStatus('Negotiation ended');
+        const lastHist = data?.state?.history?.[data.state.history.length - 1];
         setMessages((prev) => [
           ...prev,
           {
             sender: 'You',
-            text: 'I reject the proposed terms. The roundtable has concluded without reaching an agreement.',
+            text:
+              lastHist?.message ||
+              'As Crisis Coordinator, I have evaluated our final positions and concluded that the remaining gaps in resource allocations leave critical operational vulnerabilities unaddressed. Because our departments have failed to bridge these vital shortfalls before the operational deadline, I must reject the current framework and declare this negotiation at an impasse.',
             action: 'REJECT',
             stance: 'reject',
             round: totalRounds,
@@ -1587,8 +1618,64 @@ function PracticeMode() {
     return result;
   }, {});
   const acceptedAiCount = aiAgents.filter(
-    (agentName) => latestAiActions[agentName] === 'ACCEPT'
+    (agentName) => latestAiActions[agentName] === 'ACCEPT' || latestAiActions[agentName] === 'ACCEPTS'
   ).length;
+  const allAiAccepted = aiAgents.length > 0 && acceptedAiCount === aiAgents.length;
+  const latestHumanAction = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.sender === 'You' || m.sender === 'Human Participant') {
+        return (m.action || m.stance || '').toUpperCase();
+      }
+    }
+    return null;
+  }, [messages]);
+
+  const getParticipantStatus = (targetName) => {
+    const isHuman = targetName.toLowerCase().includes('human') || targetName.toLowerCase().includes('you');
+    if (isHuman) {
+      if (sessionStatus === 'Agreement reached') {
+        return { label: '✓ Accepted', color: 'text-emerald-700', bg: 'bg-emerald-50/80 border-emerald-300' };
+      }
+      if (sessionStatus === 'Deadlock') {
+        return { label: '✕ Impasse', color: 'text-rose-700', bg: 'bg-rose-50/80 border-rose-300' };
+      }
+      if (awaitingFinalDecision) {
+        return { label: '⏳ Decision Required', color: 'text-indigo-700', bg: 'bg-indigo-50/80 border-indigo-300' };
+      }
+      if (latestHumanAction === 'ACCEPT' || latestHumanAction === 'ACCEPTS') {
+        return { label: '✓ Accepted', color: 'text-emerald-700', bg: 'bg-emerald-50/80 border-emerald-300' };
+      }
+      if (latestHumanAction === 'COUNTER') {
+        return { label: '⚡ Countered', color: 'text-amber-700', bg: 'bg-amber-50/80 border-amber-300' };
+      }
+      if (latestHumanAction === 'OFFER') {
+        return { label: '📝 Offered', color: 'text-blue-700', bg: 'bg-blue-50/80 border-blue-300' };
+      }
+      return { label: 'Reviewing', color: 'text-purple-700', bg: 'bg-purple-50/80 border-purple-300' };
+    }
+
+    const fullName = aiAgents.find((name) =>
+      name.toLowerCase().includes(targetName.toLowerCase()) || targetName.toLowerCase().includes(name.toLowerCase())
+    ) || targetName;
+
+    const rawAction = (latestAiActions[fullName] || '').toUpperCase();
+
+    if (rawAction === 'ACCEPT' || rawAction === 'ACCEPTS') {
+      return { label: '✓ Accepted', color: 'text-emerald-700', bg: 'bg-emerald-50/80 border-emerald-300' };
+    }
+    if (rawAction === 'COUNTER') {
+      return { label: '⚡ Countered', color: 'text-amber-700', bg: 'bg-amber-50/80 border-amber-300' };
+    }
+    if (rawAction === 'REJECT') {
+      return { label: '✕ Rejected', color: 'text-rose-700', bg: 'bg-rose-50/80 border-rose-300' };
+    }
+    if (rawAction === 'OFFER') {
+      return { label: '📝 Offered', color: 'text-blue-700', bg: 'bg-blue-50/80 border-blue-300' };
+    }
+    return { label: 'Pending', color: 'text-slate-500', bg: 'bg-slate-50/80 border-slate-200' };
+  };
+
   const proposalMessages = messages.filter(
     (item) => item.proposal && Object.keys(item.proposal).length > 0
   );
@@ -2014,6 +2101,17 @@ function PracticeMode() {
                     <p className="mt-1 text-xs text-slate-600">
                       All {totalRounds} rounds of negotiation have concluded. Government, NGO, and District Administration have presented their final evaluations. As lead coordinator, select the final outcome:
                     </p>
+                    {allAiAccepted ? (
+                      <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-emerald-100/90 border border-emerald-300 px-2.5 py-1 text-xs font-bold text-emerald-900">
+                        <span>✓</span>
+                        <span>Unanimous AI Acceptance: All {aiAgents.length} agencies accepted! Authorizing will establish unanimous 4-party agreement.</span>
+                      </div>
+                    ) : (
+                      <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-100/90 border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-950">
+                        <span>⚠️</span>
+                        <span>Only {acceptedAiCount} of {aiAgents.length} agencies accepted (some ended on COUNTER). Full agreement requires all 4 parties to accept; finalizing will record a Deadlock / Impasse.</span>
+                      </div>
+                    )}
                   </div>
                   <span className="shrink-0 rounded-full bg-indigo-100 border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-800 uppercase tracking-wider">
                     Executive Decision
@@ -2026,14 +2124,24 @@ function PracticeMode() {
                     type="button"
                     onClick={() => handleFinalDecisionAction('accept')}
                     disabled={loading}
-                    className="flex flex-col items-start p-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 hover:border-emerald-500 transition shadow-xs text-left group disabled:opacity-50"
+                    className={`flex flex-col items-start p-4 rounded-xl border-2 transition shadow-xs text-left group disabled:opacity-50 ${
+                      allAiAccepted
+                        ? 'border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 hover:border-emerald-500'
+                        : 'border-amber-300 bg-amber-50/80 hover:bg-amber-100 hover:border-amber-500'
+                    }`}
                   >
-                    <div className="flex items-center gap-2 mb-1.5 text-emerald-800 font-extrabold text-sm group-hover:text-emerald-900">
-                      <span className="p-1 rounded-md bg-emerald-200 text-emerald-900"><Check size={16} /></span>
-                      Accept Agreement
+                    <div className={`flex items-center gap-2 mb-1.5 font-extrabold text-sm ${
+                      allAiAccepted ? 'text-emerald-800 group-hover:text-emerald-900' : 'text-amber-900 group-hover:text-amber-950'
+                    }`}>
+                      <span className={`p-1 rounded-md ${allAiAccepted ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-200 text-amber-900'}`}>
+                        <Check size={16} />
+                      </span>
+                      {allAiAccepted ? 'Accept Agreement (Unanimous 4-Party)' : 'Finalize Deliberation (Deadlock / Impasse)'}
                     </div>
-                    <p className="text-xs text-emerald-700 leading-relaxed">
-                      Ratify the resource allocation and conclude the negotiation with official multi-agency agreement.
+                    <p className={`text-xs leading-relaxed ${allAiAccepted ? 'text-emerald-700' : 'text-amber-800'}`}>
+                      {allAiAccepted
+                        ? 'Ratify the resource allocation and conclude the negotiation with official multi-agency agreement.'
+                        : 'Record final positions; because not all 4 parties accepted, this concludes in an operational deadlock.'}
                     </p>
                   </button>
 
@@ -2191,49 +2299,71 @@ function PracticeMode() {
             )}
 
             {/* ROUND 3 / FINAL REVIEW STATUS */}
-            {(round >= totalRounds || sessionStatus === 'Agreement reached' || sessionStatus === 'Deadlock') && (
-              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/70 via-white to-teal-50/50 p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-xl">🤝</span>
-                    <div>
-                      <h3 className="text-base font-bold text-slate-900">
-                        {sessionStatus === 'Agreement reached' ? 'Final Resource Allocation Agreement' : `Round ${round} Final Review`}
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Multi-agent consensus status across all 4 participants
-                      </p>
+            {(round >= totalRounds || sessionStatus === 'Agreement reached' || sessionStatus === 'Deadlock') && (() => {
+              const isAgreed = sessionStatus === 'Agreement reached';
+              const isDeadlock = sessionStatus === 'Deadlock';
+              const govStatus = getParticipantStatus('Government');
+              const ngoStatus = getParticipantStatus('NGO');
+              const distStatus = getParticipantStatus('District Admin');
+              const humanStatus = getParticipantStatus('Human (You)');
+
+              return (
+                <div className={`rounded-2xl border-2 p-6 shadow-sm transition ${
+                  isAgreed
+                    ? 'border-emerald-300 bg-gradient-to-br from-emerald-50/70 via-white to-teal-50/50'
+                    : isDeadlock
+                    ? 'border-rose-300 bg-gradient-to-br from-rose-50/70 via-white to-amber-50/40'
+                    : 'border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-blue-50/40'
+                }`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xl">{isAgreed ? '🤝' : isDeadlock ? '⚠️' : '📋'}</span>
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">
+                          {isAgreed
+                            ? 'Final Resource Allocation Agreement'
+                            : isDeadlock
+                            ? 'Deliberation Concluded — Impasse / Deadlock'
+                            : `Round ${round} Deliberation Review`}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Multi-agent consensus status across all 4 participants
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs font-extrabold uppercase border ${
+                      isAgreed
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        : isDeadlock
+                        ? 'bg-rose-100 text-rose-800 border-rose-300'
+                        : 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                    }`}>
+                      {isAgreed ? 'Agreement Reached' : isDeadlock ? 'Deadlock' : sessionStatus}
+                    </span>
+                  </div>
+
+                  {/* Real Dynamic Consensus checklist */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
+                    <div className={`rounded-xl border p-3 text-center transition ${govStatus.bg}`}>
+                      <p className="text-xs font-bold text-slate-800">Government</p>
+                      <p className={`text-sm font-extrabold mt-1 ${govStatus.color}`}>{govStatus.label}</p>
+                    </div>
+                    <div className={`rounded-xl border p-3 text-center transition ${ngoStatus.bg}`}>
+                      <p className="text-xs font-bold text-slate-800">NGO</p>
+                      <p className={`text-sm font-extrabold mt-1 ${ngoStatus.color}`}>{ngoStatus.label}</p>
+                    </div>
+                    <div className={`rounded-xl border p-3 text-center transition ${distStatus.bg}`}>
+                      <p className="text-xs font-bold text-slate-800">District Admin</p>
+                      <p className={`text-sm font-extrabold mt-1 ${distStatus.color}`}>{distStatus.label}</p>
+                    </div>
+                    <div className={`rounded-xl border p-3 text-center transition ${humanStatus.bg}`}>
+                      <p className="text-xs font-bold text-slate-800">Human (You)</p>
+                      <p className={`text-sm font-extrabold mt-1 ${humanStatus.color}`}>{humanStatus.label}</p>
                     </div>
                   </div>
-                  <span className={`rounded-full px-3 py-1 text-xs font-extrabold uppercase ${sessionStatus === 'Agreement reached' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
-                    }`}>
-                    {sessionStatus}
-                  </span>
                 </div>
-
-                {/* Consensus checklist */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
-                  <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-center">
-                    <p className="text-xs font-bold text-blue-900">Government</p>
-                    <p className="text-sm font-extrabold text-blue-700 mt-1">✓ Agreed</p>
-                  </div>
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-center">
-                    <p className="text-xs font-bold text-emerald-900">NGO</p>
-                    <p className="text-sm font-extrabold text-emerald-700 mt-1">✓ Agreed</p>
-                  </div>
-                  <div className="rounded-xl border border-orange-200 bg-orange-50/60 p-3 text-center">
-                    <p className="text-xs font-bold text-orange-900">District Admin</p>
-                    <p className="text-sm font-extrabold text-orange-700 mt-1">✓ Agreed</p>
-                  </div>
-                  <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-3 text-center">
-                    <p className="text-xs font-bold text-purple-900">Human (You)</p>
-                    <p className="text-sm font-extrabold text-purple-700 mt-1">
-                      {sessionStatus === 'Agreement reached' ? '✓ Finalized' : 'Reviewing'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
 
             {/* NEW NEGOTIATION */}
@@ -2450,15 +2580,15 @@ function PracticeMode() {
             <div className="mt-4 space-y-2">
               {aiAgents.map((agentName) => {
                 const agentStyle = getPracticeAgentStyle(agentName);
-                const actionValue = latestAiActions[agentName];
+                const statusInfo = getParticipantStatus(agentName);
                 return (
                   <div key={agentName} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
                     <span className="flex min-w-0 items-center gap-2 text-sm text-slate-700">
                       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${agentStyle.dot}`} />
                       <span className="truncate">{agentName}</span>
                     </span>
-                    <span className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${actionValue === 'ACCEPT' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                      {actionValue === 'ACCEPT' ? '✓ Accepted' : actionValue ? 'Negotiating' : 'Pending'}
+                    <span className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold border ${statusInfo.bg} ${statusInfo.color}`}>
+                      {statusInfo.label}
                     </span>
                   </div>
                 );
