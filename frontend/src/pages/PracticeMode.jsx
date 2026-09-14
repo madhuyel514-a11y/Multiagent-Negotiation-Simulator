@@ -32,67 +32,72 @@ const INITIAL_LLM_METRICS = {
 
 const PRACTICE_AGENT_STYLES = {
   government: {
-    bg: 'bg-blue-50',
-    border: 'border-blue-200',
-    badge: 'bg-blue-700 text-white',
-    dot: 'bg-blue-600',
-    label: 'text-blue-900',
-    chip: 'bg-blue-100 text-blue-800',
+    bg: 'rgba(59, 130, 246, 0.08)',
+    border: 'border-blue-500/30',
+    badge: 'bg-blue-600 text-white',
+    dot: 'bg-blue-500',
+    text: 'text-blue-400',
+    label: 'text-[var(--text-1)]',
+    chip: 'bg-blue-500/15 text-blue-300 border border-blue-500/30',
     headerBg: 'bg-blue-600',
     headerText: 'text-white',
-    tagBg: 'bg-blue-100 text-blue-700',
+    tagBg: 'bg-blue-500/20 text-blue-300',
   },
   ngo: {
-    bg: 'bg-emerald-50',
-    border: 'border-emerald-200',
-    badge: 'bg-emerald-700 text-white',
-    dot: 'bg-emerald-600',
-    label: 'text-emerald-900',
-    chip: 'bg-emerald-100 text-emerald-800',
+    bg: 'rgba(16, 185, 129, 0.08)',
+    border: 'border-emerald-500/30',
+    badge: 'bg-emerald-600 text-white',
+    dot: 'bg-emerald-500',
+    text: 'text-emerald-400',
+    label: 'text-[var(--text-1)]',
+    chip: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
     headerBg: 'bg-emerald-600',
     headerText: 'text-white',
-    tagBg: 'bg-emerald-100 text-emerald-700',
+    tagBg: 'bg-emerald-500/20 text-emerald-300',
   },
   district: {
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
-    badge: 'bg-purple-700 text-white',
-    dot: 'bg-purple-600',
-    label: 'text-purple-900',
-    chip: 'bg-purple-100 text-purple-800',
+    bg: 'rgba(168, 85, 247, 0.08)',
+    border: 'border-purple-500/30',
+    badge: 'bg-purple-600 text-white',
+    dot: 'bg-purple-500',
+    text: 'text-purple-400',
+    label: 'text-[var(--text-1)]',
+    chip: 'bg-purple-500/15 text-purple-300 border border-purple-500/30',
     headerBg: 'bg-purple-600',
     headerText: 'text-white',
-    tagBg: 'bg-purple-100 text-purple-700',
+    tagBg: 'bg-purple-500/20 text-purple-300',
   },
   human: {
-    bg: 'bg-indigo-50',
-    border: 'border-indigo-200',
-    badge: 'bg-indigo-700 text-white',
-    dot: 'bg-indigo-600',
-    label: 'text-indigo-950',
-    chip: 'bg-indigo-100 text-indigo-800',
-    headerBg: 'bg-indigo-700',
+    bg: 'rgba(99, 102, 241, 0.08)',
+    border: 'border-indigo-500/30',
+    badge: 'bg-indigo-600 text-white',
+    dot: 'bg-indigo-500',
+    text: 'text-indigo-400',
+    label: 'text-[var(--text-1)]',
+    chip: 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30',
+    headerBg: 'bg-indigo-600',
     headerText: 'text-white',
-    tagBg: 'bg-indigo-100 text-indigo-700',
+    tagBg: 'bg-indigo-500/20 text-indigo-300',
   },
   default: {
-    bg: 'bg-slate-50',
-    border: 'border-slate-200',
+    bg: 'rgba(100, 116, 139, 0.08)',
+    border: 'border-slate-500/30',
     badge: 'bg-slate-600 text-white',
-    dot: 'bg-slate-500',
-    label: 'text-slate-800',
-    chip: 'bg-slate-100 text-slate-700',
+    dot: 'bg-slate-400',
+    text: 'text-slate-300',
+    label: 'text-[var(--text-1)]',
+    chip: 'bg-slate-500/15 text-slate-300 border border-slate-500/30',
     headerBg: 'bg-slate-600',
     headerText: 'text-white',
-    tagBg: 'bg-slate-100 text-slate-600',
+    tagBg: 'bg-slate-500/20 text-slate-300',
   },
 };
 
 const PRACTICE_ACTION_STYLES = {
-  OFFER: { cls: 'bg-sky-100 text-sky-800', label: 'OFFER' },
-  COUNTER: { cls: 'bg-amber-100 text-amber-800', label: 'COUNTER' },
-  REJECT: { cls: 'bg-rose-100 text-rose-800', label: 'REJECT' },
-  ACCEPT: { cls: 'bg-emerald-100 text-emerald-800', label: 'ACCEPTS' },
+  OFFER: { cls: 'bg-sky-500/20 text-sky-400 border border-sky-500/30', label: 'OFFER' },
+  COUNTER: { cls: 'bg-amber-500/20 text-amber-400 border border-amber-500/30', label: 'COUNTER' },
+  REJECT: { cls: 'bg-rose-500/20 text-rose-400 border border-rose-500/30', label: 'REJECT' },
+  ACCEPT: { cls: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30', label: 'ACCEPTS' },
 };
 
 function getPracticeAgentStyle(agentName) {
@@ -246,8 +251,8 @@ function PracticeAllocationBreakdown({ proposal, style }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {Object.entries(proposal).map(([area, resources]) => (
-        <div key={area} className="rounded-xl bg-white border border-slate-200 p-3 shadow-2xs">
-          <p className="text-xs font-bold text-slate-800 mb-2 border-b border-slate-100 pb-1">{area}</p>
+        <div key={area} className="rounded-xl border border-[var(--border-subtle)] p-3 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
+          <p className="text-xs font-bold text-[var(--text-1)] mb-2 border-b border-[var(--border-subtle)] pb-1">{area}</p>
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(resources || {}).map(([resource, amount]) => (
               <span key={resource} className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${style.chip}`}>
@@ -282,7 +287,7 @@ function PracticeTranscriptEntry({ msg, index, previousProposal }) {
     return (
       <div className="relative pl-8">
         <div className="absolute left-0 top-3 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm bg-red-500" />
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-400">
           {msg.text}
         </div>
       </div>
@@ -1703,7 +1708,7 @@ function PracticeMode() {
 
       {/* HEADER */}
 
-      <section className="rounded-[2rem] border border-slate-200 bg-gradient-to-br from-blue-600 via-blue-500 to-indigo-600 p-8 text-white shadow-xl">
+      <section className="rounded-[2rem] border border-[var(--border-card)] bg-gradient-to-br from-blue-600/90 via-blue-700/80 to-indigo-900/90 p-8 text-white shadow-xl backdrop-blur-md relative overflow-hidden">
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 
@@ -1735,19 +1740,19 @@ function PracticeMode() {
       {/* NEGOTIATION */}
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.75fr)_minmax(300px,0.75fr)]">
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="rounded-2xl border border-[var(--border-subtle)] shadow-sm" style={{ background: 'var(--bg-surface)' }}>
 
           {/* NEGOTIATION HEADER */}
 
-          <div className="flex flex-col gap-3 border-b border-slate-200 p-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] p-6 sm:flex-row sm:items-center sm:justify-between">
 
             <div>
 
-              <h2 className="text-xl font-semibold text-slate-900">
+              <h2 className="text-xl font-semibold text-[var(--text-1)]">
                 Negotiation
               </h2>
 
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
                 Review the conversation, evaluate AI proposals, and make your next negotiation decision.
               </p>
               <p className="mt-2 text-sm font-semibold text-slate-700">
@@ -1767,7 +1772,7 @@ function PracticeMode() {
                 type="button"
                 onClick={downloadTranscript}
                 disabled={messages.length === 0}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] px-4 py-2 text-sm font-semibold text-[var(--text-1)] shadow-sm transition hover:border-blue-400 hover:text-blue-400 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: 'var(--bg-surface-2)' }}
                 title="Download the complete negotiation transcript"
               >
             Download Transcript
@@ -1776,27 +1781,27 @@ function PracticeMode() {
                 type="button"
                 onClick={downloadSummaryReport}
                 disabled={messages.length === 0}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] px-4 py-2 text-sm font-semibold text-[var(--text-1)] shadow-sm transition hover:border-indigo-400 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: 'var(--bg-surface-2)' }}
                 title="Download the final negotiation summary report"
               >
             Download Summary
               </button>
 
-              <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
+              <span className="rounded-full bg-blue-500/15 border border-blue-500/30 px-4 py-2 text-sm font-semibold text-blue-400">
                 Round {round} / {totalRounds}
               </span>
 
-              <span className="rounded-full bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700">
+              <span className="rounded-full bg-indigo-500/15 border border-indigo-500/30 px-4 py-2 text-sm font-semibold text-indigo-400">
                 Consensus: {Math.round(consensus * 100)}%
               </span>
 
-              <span className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
+              <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-4 py-2 text-sm font-semibold text-emerald-400">
                 <span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />
                 {sessionStatus}
               </span>
 
               {(sessionStatus === 'Agreement reached' || sessionStatus === 'Deadlock' || sessionStatus === 'Negotiation ended') && (
-                <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
+                <span className="rounded-full bg-slate-500/15 border border-slate-500/30 px-4 py-2 text-sm font-semibold text-slate-300">
                   Rounds used: {round}
                 </span>
               )}
@@ -1813,7 +1818,7 @@ function PracticeMode() {
               {/* Conversation is the primary focus */}
               <div className="max-h-[680px] overflow-y-auto pr-2">
                 {messages.length > 0 && (
-                  <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-slate-200 rounded-full" />
+                  <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-[var(--border-subtle)] rounded-full" />
                 )}
 
                 <div className="space-y-6">
@@ -1876,7 +1881,7 @@ function PracticeMode() {
               const columnTotals = getProposalColumnTotals(activeProposal);
 
               return (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
+                <div className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-xs space-y-4" style={{ background: 'var(--bg-surface)' }}>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3">
                     <div>
                       <div className="flex items-center gap-2">
@@ -1923,10 +1928,10 @@ function PracticeMode() {
                   )}
 
                   {/* RESOURCE ALLOCATION MATRIX TABLE */}
-                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <div className="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
+                        <tr className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                           <th className="px-4 py-3 min-w-[140px]">Affected Region</th>
                           {resourceNames.map((res) => {
                             const maxAvail = scenarioResourceQuantities[res] ?? 0;
@@ -1977,7 +1982,7 @@ function PracticeMode() {
                                       )
                                     }
                                     disabled={loading || status !== 'Your turn'}
-                                    className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center font-mono text-xs font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
+                                    className="w-20 rounded-lg border border-[var(--border-subtle)] px-2 py-1.5 text-center font-mono text-xs font-semibold text-[var(--text-1)] outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500" style={{ background: 'var(--bg-surface-2)' }}
                                   />
                                 </td>
                               ))}
@@ -1986,7 +1991,7 @@ function PracticeMode() {
                         })}
 
                         {/* TOTAL VALIDATION ROW */}
-                        <tr className="bg-slate-50/90 font-bold border-t-2 border-slate-200">
+                        <tr className="font-bold border-t-2 border-[var(--border-subtle)] text-[var(--text-1)]" style={{ background: 'var(--bg-surface-2)' }}>
                           <td className="px-4 py-3 font-bold text-slate-900">
                             TOTAL ALLOCATION
                           </td>
@@ -2000,7 +2005,7 @@ function PracticeMode() {
 
                             return (
                               <td key={res} className="px-3 py-3 text-center">
-                                <div className="font-mono text-xs font-bold text-slate-900">
+                                <div className="font-mono text-xs font-bold text-[var(--text-1)]">
                                   {totalVal} / {maxVal}
                                 </div>
                                 <div className="mt-0.5">
@@ -2182,7 +2187,7 @@ function PracticeMode() {
 
             {/* RATIONALE & MESSAGE INPUT */}
             {status === 'Your turn' && (
-              <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+              <div className="space-y-4 rounded-2xl border border-[var(--border-subtle)] p-5 shadow-xs" style={{ background: 'var(--bg-surface)' }}>
                 {acceptedAiCount >= 2 && (
                   <div className="rounded-xl border border-emerald-300 bg-emerald-50/90 p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs text-emerald-900 shadow-2xs animate-fadeIn">
                     <div className="flex items-center gap-2">
@@ -2220,7 +2225,7 @@ function PracticeMode() {
                       value={action}
                       onChange={(event) => setAction(event.target.value)}
                       disabled={loading || status !== 'Your turn'}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:border-blue-500 disabled:bg-slate-100"
+                      className="rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-xs font-semibold text-[var(--text-1)] outline-none focus:border-blue-500" style={{ background: 'var(--bg-surface-2)' }}
                     >
                       {round === 1 ? (
                         <option value="Offer">Initial Proposal (Offer)</option>
@@ -2403,7 +2408,7 @@ function PracticeMode() {
         <aside className="space-y-6 xl:sticky xl:top-6">
 
           {/* CONFIGURATION DETAILS */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Configuration</p>
@@ -2418,7 +2423,7 @@ function PracticeMode() {
               value={selectedScenario.id}
               onChange={handleScenarioChange}
               disabled={loading}
-              className="mt-4 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-100"
+              className="mt-4 w-full rounded-xl border border-[var(--border-subtle)] px-3 py-2.5 text-xs font-semibold text-[var(--text-1)] outline-none focus:border-blue-500" style={{ background: 'var(--bg-surface-2)' }}
             >
               {scenarios.map((scenario) => (
                 <option key={scenario.id} value={scenario.id}>
@@ -2447,11 +2452,11 @@ function PracticeMode() {
           </section>
 
           {/* RESOURCE CONFIGURATION */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">Resources</p>
-                <h3 className="mt-1 text-base font-bold text-slate-900">Available Budget</h3>
+                <h3 className="mt-1 text-base font-bold text-[var(--text-1)]">Available Budget</h3>
               </div>
               <span className="text-[10px] font-semibold text-slate-400">Live</span>
             </div>
@@ -2460,10 +2465,10 @@ function PracticeMode() {
               {resourceNames.slice(0, 5).map((item) => (
                 <div
                   key={item}
-                  className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5"
+                  className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] px-3 py-2.5" style={{ background: 'var(--bg-surface-2)' }}
                 >
-                  <span className="text-xs font-semibold text-slate-700">{item}</span>
-                  <span className="font-mono text-xs font-bold text-slate-900">
+                  <span className="text-xs font-semibold text-[var(--text-2)]">{item}</span>
+                  <span className="font-mono text-xs font-bold text-[var(--text-1)]">
                     {scenarioResourceQuantities[item] ?? 0}
                   </span>
                 </div>
@@ -2474,7 +2479,7 @@ function PracticeMode() {
           {/* CURRENT AI PROPOSALS */}
                       {/* CURRENT AI PROPOSALS (ROUND X) */}
             {getLatestAiProposals().length > 0 && status === 'Your turn' && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="rounded-2xl border border-[var(--border-subtle)] p-4" style={{ background: 'var(--bg-surface-2)' }}>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-indigo-600" />
@@ -2493,7 +2498,7 @@ function PracticeMode() {
                     return (
                       <div
                         key={aiProp.sender}
-                        className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-slate-300 transition"
+                        className="flex flex-col justify-between rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs transition" style={{ background: 'var(--bg-surface)' }}
                       >
                         <div>
                           <div className="flex items-center justify-between gap-2 mb-2">
@@ -2541,17 +2546,17 @@ function PracticeMode() {
 
 
 
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-            <h3 className="text-base font-semibold text-slate-800">Negotiation Progress</h3>
+          <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
+            <h3 className="text-base font-semibold text-[var(--text-1)]">Negotiation Progress</h3>
             <div className="mt-4 space-y-2 text-sm">
-              <div className="flex justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
-                <span className="text-slate-500">Round</span>
-                <span className="font-semibold text-slate-800">{round} / {totalRounds}</span>
+              <div className="flex justify-between rounded-xl border border-[var(--border-subtle)] px-3 py-2 shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
+                <span className="text-[var(--text-muted)]">Round</span>
+                <span className="font-semibold text-[var(--text-1)]">{round} / {totalRounds}</span>
               </div>
-              <div className="rounded-xl bg-white px-3 py-3 shadow-sm">
+              <div className="rounded-xl border border-[var(--border-subtle)] px-3 py-3 shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">AI agents accepted</span>
-                  <span className="font-semibold text-slate-800">{acceptedAiCount} / {aiAgents.length}</span>
+                  <span className="text-[var(--text-muted)]">AI agents accepted</span>
+                  <span className="font-semibold text-[var(--text-1)]">{acceptedAiCount} / {aiAgents.length}</span>
                 </div>
                 <div className="mt-2 flex gap-1.5">
                   {aiAgents.map((agentName) => (
@@ -2562,12 +2567,12 @@ function PracticeMode() {
                   ))}
                 </div>
               </div>
-              <div className="flex justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
-                <span className="text-slate-500">Total participants</span>
-                <span className="font-semibold text-slate-800">{aiAgents.length + 1}</span>
+              <div className="flex justify-between rounded-xl border border-[var(--border-subtle)] px-3 py-2 shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
+                <span className="text-[var(--text-muted)]">Total participants</span>
+                <span className="font-semibold text-[var(--text-1)]">{aiAgents.length + 1}</span>
               </div>
-              <div className="flex justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
-                <span className="text-slate-500">Agreement</span>
+              <div className="flex justify-between rounded-xl border border-[var(--border-subtle)] px-3 py-2 shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
+                <span className="text-[var(--text-muted)]">Agreement</span>
                 <span className={`font-semibold ${sessionStatus === 'Agreement reached' ? 'text-emerald-700' : 'text-slate-700'}`}>
                   {sessionStatus === 'Agreement reached' ? '✓ Reached' : sessionStatus === 'Deadlock' ? 'No consensus' : 'Active'}
                 </span>
@@ -2575,15 +2580,15 @@ function PracticeMode() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-            <h3 className="text-base font-semibold text-slate-800">Agent Status</h3>
+          <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
+            <h3 className="text-base font-semibold text-[var(--text-1)]">Agent Status</h3>
             <div className="mt-4 space-y-2">
               {aiAgents.map((agentName) => {
                 const agentStyle = getPracticeAgentStyle(agentName);
                 const statusInfo = getParticipantStatus(agentName);
                 return (
-                  <div key={agentName} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
-                    <span className="flex min-w-0 items-center gap-2 text-sm text-slate-700">
+                  <div key={agentName} className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] px-3 py-2 shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
+                    <span className="flex min-w-0 items-center gap-2 text-sm text-[var(--text-1)]">
                       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${agentStyle.dot}`} />
                       <span className="truncate">{agentName}</span>
                     </span>
@@ -2596,7 +2601,7 @@ function PracticeMode() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+          <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
             <h3 className="text-base font-semibold text-slate-800">LLM Metrics</h3>
             <div className="mt-4 space-y-2">
               {[
@@ -2607,9 +2612,9 @@ function PracticeMode() {
                 ['Average Latency', `${Number(llmMetrics.average_latency || 0).toFixed(2)}s`],
                 ['Total API Latency', `${Number(llmMetrics.total_latency || 0).toFixed(2)}s`],
               ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
-                  <span className="text-slate-500">{label}</span>
-                  <span className="font-semibold text-slate-800">{value}</span>
+                <div key={label} className="flex items-center justify-between rounded-xl border border-[var(--border-subtle)] px-3 py-2 text-sm shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
+                  <span className="text-[var(--text-muted)]">{label}</span>
+                  <span className="font-semibold text-[var(--text-1)]">{value}</span>
                 </div>
               ))}
             </div>
@@ -2757,10 +2762,10 @@ function PracticeMode() {
                   {Object.entries(initialDemands).map(([agentName, demands]) => {
                     const s = getPracticeAgentStyle(agentName);
                     return (
-                      <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+                      <div key={agentName} className="rounded-xl p-4 shadow-sm border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                         <div className="flex items-center gap-2 mb-3">
                           <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
-                          <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                          <p className="text-sm font-bold text-[var(--text-1)]">{agentName}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {demands && typeof demands === 'object' && !Array.isArray(demands) ? (
@@ -2909,7 +2914,7 @@ function PracticeMode() {
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
                         selectedDiffSource === 'opening'
                           ? 'bg-emerald-700 text-white shadow-sm'
-                          : 'bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-100/60'
+                          : 'border border-[var(--border-subtle)] text-[var(--text-1)] hover:border-emerald-400'
                       }`}
                     >
                       Baseline Opening Demands
@@ -2922,7 +2927,7 @@ function PracticeMode() {
                         className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
                           selectedDiffSource === name
                             ? 'bg-emerald-700 text-white shadow-sm'
-                            : 'bg-white text-emerald-800 border border-emerald-200 hover:bg-emerald-100/60'
+                            : 'border border-[var(--border-subtle)] text-[var(--text-1)] hover:border-emerald-400'
                         }`}
                       >
                         {name}
@@ -2934,7 +2939,7 @@ function PracticeMode() {
 
               {/* Variance Metric Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Reallocated</p>
                   <p className="mt-1 text-lg font-extrabold text-emerald-800">
                     {totalReallocated} <span className="text-xs font-normal text-slate-500">units</span>
@@ -2942,7 +2947,7 @@ function PracticeMode() {
                   <p className="text-[11px] text-slate-500 mt-0.5">Resources shifted to meet needs</p>
                 </div>
 
-                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Increased Allocations</p>
                   <p className="mt-1 text-lg font-extrabold text-emerald-700">
                     {increasedCount} <span className="text-xs font-normal text-slate-500">resources</span>
@@ -2950,7 +2955,7 @@ function PracticeMode() {
                   <p className="text-[11px] text-emerald-600 mt-0.5">Secured higher shares</p>
                 </div>
 
-                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Concessions Made</p>
                   <p className="mt-1 text-lg font-extrabold text-amber-700">
                     {concededCount} <span className="text-xs font-normal text-slate-500">resources</span>
@@ -2958,7 +2963,7 @@ function PracticeMode() {
                   <p className="text-[11px] text-amber-600 mt-0.5">{totalConceded} units relinquished</p>
                 </div>
 
-                <div className="rounded-xl border border-emerald-200 bg-white p-3.5 shadow-2xs">
+                <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Maintained Unchanged</p>
                   <p className="mt-1 text-lg font-extrabold text-slate-800">
                     {unchangedCount} <span className="text-xs font-normal text-slate-500">resources</span>
@@ -2968,7 +2973,7 @@ function PracticeMode() {
               </div>
 
               {/* Difference Breakdown Table */}
-              <div className="overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-sm">
+              <div className="overflow-hidden rounded-xl border border-[var(--border-subtle)] shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-emerald-50/70 text-[11px] font-extrabold uppercase tracking-wider text-emerald-900 border-b border-emerald-200">
@@ -3063,7 +3068,7 @@ function PracticeMode() {
 
                   {showAdvancedOutcome && (
                     <div className="mt-4 space-y-4">
-                      <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                      <div className="rounded-xl border border-[var(--border-subtle)] p-4" style={{ background: 'var(--bg-surface-2)' }}>
                         <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 mb-3">
                           Consensus Outcome Summary
                         </h4>
@@ -3087,7 +3092,7 @@ function PracticeMode() {
 
                       {/* Per-Agent Concession Patterns */}
                       {Object.entries(outcomeAnalysis.concession_patterns || {}).length > 0 && (
-                        <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                        <div className="rounded-xl border border-[var(--border-subtle)] p-4" style={{ background: 'var(--bg-surface-2)' }}>
                           <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 mb-3">
                             Participant Concession Patterns
                           </h4>

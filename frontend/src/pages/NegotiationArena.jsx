@@ -921,7 +921,7 @@ function NegotiationArena() {
                 {Object.entries(initialDemands).map(([agentName, demands]) => {
                   const s = getAgentStyle(agentName);
                   return (
-                    <div key={agentName} className="bg-white rounded-xl p-4 shadow-sm">
+                    <div key={agentName} className="rounded-xl p-4 shadow-sm border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface)' }}>
                       <div className="flex items-center gap-2 mb-3">
                         <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
                         <p className="text-sm font-bold text-slate-800">{agentName}</p>
@@ -1003,7 +1003,7 @@ function NegotiationArena() {
 
           {outcomeAnalysis && (
             <div className="mt-8 space-y-6">
-              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+              <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
                   Outcome Summary
                 </h3>
@@ -1017,7 +1017,7 @@ function NegotiationArena() {
                     ['Accepted participants', outcomeAnalysis.agreement_terms?.accepted_participants?.join(', ')],
                     ['Total participants', outcomeAnalysis.agreement_terms?.total_participants],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl bg-slate-50 p-3">
+                    <div key={label} className="rounded-xl p-3 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                         {label}
                       </p>
@@ -1029,7 +1029,7 @@ function NegotiationArena() {
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+              <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
                   Agreement Terms
                 </h3>
@@ -1054,7 +1054,7 @@ function NegotiationArena() {
                     <div className="space-y-2">
                       {Object.entries(outcomeAnalysis.agreement_terms?.per_resource_totals || {}).length > 0 ? (
                         Object.entries(outcomeAnalysis.agreement_terms.per_resource_totals).map(([resource, quantity]) => (
-                          <div key={resource} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                          <div key={resource} className="flex justify-between rounded-lg px-3 py-2 text-sm border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                             <span className="text-slate-600">{resource}</span>
                             <span className="font-semibold text-slate-800">{quantity}</span>
                           </div>
@@ -1067,14 +1067,14 @@ function NegotiationArena() {
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+              <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
                   Concession Patterns
                 </h3>
                 <div className="mt-4 grid gap-4 lg:grid-cols-3">
                   {Object.entries(outcomeAnalysis.concession_patterns || {}).length > 0 ? (
                     Object.entries(outcomeAnalysis.concession_patterns).map(([agentName, pattern]) => (
-                      <div key={agentName} className="rounded-xl bg-slate-50 p-4">
+                      <div key={agentName} className="rounded-xl p-4 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                         <p className="text-sm font-bold text-slate-800">{agentName}</p>
                         <div className="mt-3 space-y-2 text-xs">
                           <p className="font-semibold text-emerald-700">Increased</p>
@@ -1102,14 +1102,14 @@ function NegotiationArena() {
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-emerald-200 bg-white p-5">
+              <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
                   Per-Agent Performance
                 </h3>
                 <div className="mt-4 grid gap-4 lg:grid-cols-3">
                   {Object.entries(outcomeAnalysis.agent_performance || {}).length > 0 ? (
                     Object.entries(outcomeAnalysis.agent_performance).map(([agentName, performance]) => (
-                      <div key={agentName} className="rounded-xl bg-slate-50 p-4">
+                      <div key={agentName} className="rounded-xl p-4 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                         <p className="text-sm font-bold text-slate-800">{agentName}</p>
                         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                           {[
@@ -1124,7 +1124,7 @@ function NegotiationArena() {
                             ['Proposal stability', performance?.proposal_stability],
                             ['Contribution', displayBoolean(performance?.contribution_to_agreement)],
                           ].map(([label, value]) => (
-                            <div key={label} className="rounded-lg bg-white p-2">
+                            <div key={label} className="rounded-lg p-2 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
                               <p className="text-slate-400">{label}</p>
                               <p className="mt-1 font-semibold text-slate-700">{displayValue(value)}</p>
                             </div>
