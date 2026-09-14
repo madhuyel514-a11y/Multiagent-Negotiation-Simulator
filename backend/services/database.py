@@ -1,4 +1,5 @@
 import os
+import asyncio
 
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -10,6 +11,7 @@ MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "negotiation_simulator").strip()
 
 _client: AsyncIOMotorClient | None = None
 _db = None
+_mongo_loop = None
 
 
 async def connect_to_mongo() -> None:
@@ -18,13 +20,14 @@ async def connect_to_mongo() -> None:
     Called once from FastAPI's startup event so the app opens a single
     connection pool rather than reconnecting per-request.
     """
-    global _client, _db
+    global _client, _db, _mongo_loop
 
     if not MONGODB_URI:
         print("MONGODB_URI is not set. Skipping MongoDB connection.")
         return
 
     try:
+        _mongo_loop = asyncio.get_running_loop()
         _client = AsyncIOMotorClient(MONGODB_URI)
         _db = _client[MONGODB_DB_NAME]
         # ping confirms the cluster is actually reachable, not just that
@@ -36,6 +39,7 @@ async def connect_to_mongo() -> None:
         print(f"MongoDB connection failed: {exc}")
         _client = None
         _db = None
+        _mongo_loop = None
 
 
 async def _ensure_indexes() -> None:
@@ -58,11 +62,12 @@ async def _ensure_indexes() -> None:
 
 async def close_mongo_connection() -> None:
     """Close the Motor client. Called from FastAPI's shutdown event."""
-    global _client
+    global _client, _mongo_loop
 
     if _client is not None:
         _client.close()
         print("MongoDB connection closed.")
+        _mongo_loop = None
 
 
 def get_database():
@@ -77,3 +82,8 @@ def get_sessions_collection():
     if _db is None:
         return None
     return _db["sessions"]
+
+
+def get_mongo_loop():
+    """Return the event loop that owns the active Motor client."""
+    return _mongo_loop

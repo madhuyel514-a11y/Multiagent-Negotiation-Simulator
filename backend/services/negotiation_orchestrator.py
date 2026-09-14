@@ -21,7 +21,7 @@ from services.evaluation_engine import (
     _resource_priority,
     build_outcome_analysis,
 )
-from services.database import get_sessions_collection
+from services.database import get_mongo_loop, get_sessions_collection
 
 
 class NegotiationOrchestrator:
@@ -37,6 +37,27 @@ class NegotiationOrchestrator:
     # never written to Mongo. Only the `state` dict is persisted.
 
     async def _persist_session(self, session_id: str) -> None:
+        mongo_loop = get_mongo_loop()
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if (
+            mongo_loop is not None
+            and mongo_loop.is_running()
+            and current_loop is not mongo_loop
+        ):
+            future = asyncio.run_coroutine_threadsafe(
+                self._persist_session_on_current_loop(session_id),
+                mongo_loop,
+            )
+            await asyncio.wrap_future(future)
+            return
+
+        await self._persist_session_on_current_loop(session_id)
+
+    async def _persist_session_on_current_loop(self, session_id: str) -> None:
         collection = get_sessions_collection()
         if collection is None:
             # Not connected to Atlas (e.g. MONGODB_URI missing/unreachable).
@@ -81,6 +102,14 @@ class NegotiationOrchestrator:
         try:
             if loop is not None:
                 loop.create_task(self._persist_session(session_id))
+            elif (
+                (mongo_loop := get_mongo_loop()) is not None
+                and mongo_loop.is_running()
+            ):
+                asyncio.run_coroutine_threadsafe(
+                    self._persist_session_on_current_loop(session_id),
+                    mongo_loop,
+                ).result()
             else:
                 asyncio.run(self._persist_session(session_id))
         except Exception as exc:
