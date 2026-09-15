@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, CheckCircle, ClipboardList, Shield, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import OutcomeCharts from '../components/OutcomeCharts';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
@@ -166,9 +168,9 @@ function downloadTextFile(filename, content) {
 // flat ({Food: 280}) and per-district nested
 // ({ "Riverbend District": { Food: 280, ... } }) shapes
 // ─────────────────────────────────────────────
-function AllocationBreakdown({ proposal, agentStyle }) {
+function AllocationBreakdown({ proposal, agentStyle, style }) {
   if (!proposal || Object.keys(proposal).length === 0) return null;
-  const s = agentStyle || AGENT_STYLES.default;
+  const s = agentStyle || style || AGENT_STYLES.default;
   const isNested = Object.values(proposal).some(
     (v) => v && typeof v === 'object' && !Array.isArray(v)
   );
@@ -186,14 +188,25 @@ function AllocationBreakdown({ proposal, agentStyle }) {
     );
   }
 
+  const entries = Object.entries(proposal);
+  const count = entries.length;
+  const gridColsClass =
+    count === 1
+      ? 'grid-cols-1'
+      : count === 2
+      ? 'grid-cols-1 sm:grid-cols-2'
+      : count === 3
+      ? 'grid-cols-1 sm:grid-cols-3'
+      : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
+
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {Object.entries(proposal).map(([area, resources]) => (
-        <div key={area} className="rounded-xl p-3"
+    <div className={`grid gap-2 ${gridColsClass}`}>
+      {entries.map(([area, resources]) => (
+        <div key={area} className="rounded-xl p-3 flex flex-col justify-between"
           style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
           <p className="text-xs font-bold mb-2" style={{ color: s.color }}>{area}</p>
           <div className="flex flex-wrap gap-1.5">
-            {Object.entries(resources).map(([resource, amount]) => (
+            {Object.entries(resources || {}).map(([resource, amount]) => (
               <span key={resource} className="badge text-[11px]"
                 style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
                 {resource}: {amount}
@@ -365,7 +378,11 @@ function NegotiationArena() {
 
   const applyState = (data) => {
     const state = data?.state || data || {};
-    if (data?.session_id) setSessionId(data.session_id);
+    const sid = data?.session_id || state?.session_id;
+    if (sid) {
+      setSessionId(sid);
+      sessionStorage.setItem('activeArenaSessionId', sid);
+    }
     setHistory(state.history || []);
     setCurrentRound(Number(state.current_round ?? data?.round ?? 1));
     setConsensus(Number(state.consensus ?? data?.consensus ?? 0));
@@ -379,7 +396,8 @@ function NegotiationArena() {
     setFinalReport(state.final_report ?? data?.final_report ?? null);
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
-    if (data?.gemini_metrics) setGeminiMetrics(data.gemini_metrics);
+    const incomingMetrics = data?.gemini_metrics || state?.gemini_metrics;
+    if (incomingMetrics) setGeminiMetrics(incomingMetrics);
 
     const completedReport = state.final_report ?? data?.final_report;
     if (completedReport || state.negotiation_ended || data?.negotiation_ended) {
@@ -398,6 +416,8 @@ function NegotiationArena() {
   const startSession = async () => {
     if (!scenario || !config) return null;
     localStorage.removeItem('negotiationOutcome');
+    sessionStorage.removeItem('activeArenaSessionId');
+    setGeminiMetrics(INITIAL_GEMINI_METRICS);
     const response = await fetch(`${API_BASE}/api/negotiation/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -428,7 +448,7 @@ function NegotiationArena() {
     setLoading(true);
     setApiError(null);
     try {
-      let sid = sessionId;
+      let sid = sessionId || sessionStorage.getItem('activeArenaSessionId');
       if (!sid) sid = await startSession();
 
       const response = await fetch(`${API_BASE}/api/negotiation/turn`, {
@@ -450,9 +470,32 @@ function NegotiationArena() {
   };
 
   useEffect(() => {
-    if (scenario && config && !startedRef.current) {
+    const checkAndResumeSession = async () => {
+      if (!scenario || !config || startedRef.current) return;
       startedRef.current = true;
+
+      const savedSid = sessionStorage.getItem('activeArenaSessionId');
+      if (savedSid) {
+        try {
+          const res = await fetch(`${API_BASE}/api/negotiation/session/${savedSid}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.state) {
+              applyState(data);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('Could not restore arena session:', err);
+        }
+        sessionStorage.removeItem('activeArenaSessionId');
+      }
+
       runTurn();
+    };
+
+    if (scenario && config) {
+      checkAndResumeSession();
     }
   }, [scenario, config]);
 
@@ -466,6 +509,8 @@ function NegotiationArena() {
 
   const reset = async () => {
     if (!scenario || !config) return;
+    sessionStorage.removeItem('activeArenaSessionId');
+    setSessionId(null);
     setIsAutoRunning(false);
     setGeminiMetrics(INITIAL_GEMINI_METRICS);
     setLoading(true);
@@ -738,7 +783,7 @@ function NegotiationArena() {
       </div>
 
       {/* ── Main content ── */}
-      <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
+      <div className="grid gap-5 xl:grid-cols-[1fr_340px] items-start">
 
         {/* ── Transcript ── */}
         <div className="card p-5">
@@ -792,8 +837,34 @@ function NegotiationArena() {
           </div>
         </div>
 
-        {/* ── Sidebar ── */}
-        <div className="space-y-4">
+        {/* ── Sticky Right Sidebar ── */}
+        <div className="space-y-4 xl:sticky xl:top-20 xl:self-start xl:max-h-[calc(100vh-5.5rem)] xl:overflow-y-auto custom-scrollbar xl:pr-1">
+          {/* Sticky quick action controls */}
+          <div className="card p-3 flex items-center justify-between gap-2 shadow-xs">
+            <button
+              onClick={runTurn}
+              disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
+              className="btn-accent flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-semibold disabled:opacity-40"
+            >
+              {loading && !isAutoRunning ? 'Thinking...' : 'Next Turn'}
+            </button>
+            <button
+              onClick={() => setIsAutoRunning(!isAutoRunning)}
+              disabled={negotiationEnded || consensusReached}
+              className="rounded-full px-3 py-1.5 text-xs font-semibold text-white transition-all disabled:opacity-40"
+              style={{ background: isAutoRunning ? '#ef4444' : '#10b981' }}
+            >
+              {isAutoRunning ? 'Stop' : 'Auto Run'}
+            </button>
+            <button
+              onClick={reset}
+              disabled={loading}
+              className="btn-ghost px-2.5 py-1.5 text-xs disabled:opacity-40"
+            >
+              Reset
+            </button>
+          </div>
+
           {/* Progress */}
           <div className="card p-4">
             <p className="section-title">Progress</p>
@@ -1003,6 +1074,15 @@ function NegotiationArena() {
 
           {outcomeAnalysis && (
             <div className="mt-8 space-y-6">
+              <ErrorBoundary title="Analytics & Charts Display Notice">
+                <OutcomeCharts
+                  outcomeAnalysis={outcomeAnalysis}
+                  history={history}
+                  scenarioResources={scenario?.resourceQuantities || {}}
+                  participants={participantNames}
+                />
+              </ErrorBoundary>
+
               <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
                   Outcome Summary

@@ -11,6 +11,7 @@ from agents.district_agent import DistrictAdministrationAgent
 from services.gemini_service import (
     ask_model,
     get_gemini_metrics,
+    reset_gemini_metrics,
     generate_human_suggestion,
 )
 from services.evaluation_engine import (
@@ -125,6 +126,9 @@ class NegotiationOrchestrator:
         agents_config: list,
         config: dict
     ) -> str:
+
+        # Reset LLM usage metrics so every new negotiation begins completely fresh
+        reset_gemini_metrics()
 
         session_id = str(uuid.uuid4())
 
@@ -295,7 +299,9 @@ class NegotiationOrchestrator:
 
             "max_rounds": max_rounds,
             
-            "stubborn_until": __import__("random").randint(2, max(2, max_rounds - 1))
+            "stubborn_until": __import__("random").randint(2, max(2, max_rounds - 1)),
+
+            "gemini_metrics": get_gemini_metrics()
         }
 
         self.sessions[session_id] = {

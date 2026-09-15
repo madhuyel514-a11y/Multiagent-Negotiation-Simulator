@@ -126,7 +126,7 @@ export default function Layout({ children }) {
 
       {/* ── Desktop Sidebar ── */}
       <aside
-        className="fixed left-0 top-0 z-30 hidden h-screen w-60 flex-col lg:flex"
+        className="fixed left-0 top-0 z-30 hidden h-screen w-60 flex-col lg:flex select-none overflow-y-auto custom-scrollbar"
         style={{
           background: 'var(--sidebar-bg)',
           borderRight: '1px solid var(--sidebar-border)',

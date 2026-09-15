@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, Clock3, Users, TrendingUp, TrendingDown, Minus, Award, ChevronDown, ChevronUp } from 'lucide-react';
+import OutcomeCharts from '../components/OutcomeCharts';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 function fmt(v) { return v == null || v === '' ? 'N/A' : String(v); }
 
@@ -87,6 +89,9 @@ export default function Outcome() {
   const totals = terms.per_resource_totals || {};
   const maxTotal = Math.max(...Object.values(totals).map(Number), 1);
 
+  const history = saved?.history || [];
+  const scenarioResources = saved?.scenario?.resourceQuantities || saved?.resourceQuantities || {};
+
   return (
     <div className="space-y-5 animate-fade-in">
 
@@ -131,6 +136,16 @@ export default function Outcome() {
           ))}
         </div>
       </section>
+
+      {/* Interactive Visual Charts */}
+      <ErrorBoundary title="Analytics & Charts Display Notice">
+        <OutcomeCharts
+          outcomeAnalysis={analysis}
+          history={history}
+          scenarioResources={scenarioResources}
+          participants={participants}
+        />
+      </ErrorBoundary>
 
       {/* Final Allocation */}
       {allocation && (

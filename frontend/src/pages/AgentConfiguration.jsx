@@ -137,6 +137,8 @@ export default function AgentConfiguration() {
   }));
 
   const handleStart = () => {
+    sessionStorage.removeItem('activeArenaSessionId');
+    sessionStorage.removeItem('activePracticeSessionId');
     const cleanAreas = affectedAreas.filter((a) => a.name.trim()).map((a) => ({
       name: a.name.trim(), population: a.population === '' ? undefined : Number(a.population),
       severity: a.severity, impact: a.impact, needs: a.needs,

@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 
 import { scenarios } from '../data/scenarios';
+import OutcomeCharts from '../components/OutcomeCharts';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const API_URL = 'http://127.0.0.1:8000';
 
@@ -248,10 +250,21 @@ function PracticeAllocationBreakdown({ proposal, style }) {
     );
   }
 
+  const entries = Object.entries(proposal);
+  const count = entries.length;
+  const gridColsClass =
+    count === 1
+      ? 'grid-cols-1'
+      : count === 2
+      ? 'grid-cols-1 sm:grid-cols-2'
+      : count === 3
+      ? 'grid-cols-1 sm:grid-cols-3'
+      : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
+
   return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {Object.entries(proposal).map(([area, resources]) => (
-        <div key={area} className="rounded-xl border border-[var(--border-subtle)] p-3 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
+    <div className={`grid gap-2 ${gridColsClass}`}>
+      {entries.map(([area, resources]) => (
+        <div key={area} className="rounded-xl border border-[var(--border-subtle)] p-3 shadow-2xs" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-1)' }}>
           <p className="text-xs font-bold text-[var(--text-1)] mb-2 border-b border-[var(--border-subtle)] pb-1">{area}</p>
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(resources || {}).map(([resource, amount]) => (
@@ -719,6 +732,7 @@ function PracticeMode() {
   const startSession = async (scenario) => {
     try {
       localStorage.removeItem('negotiationOutcome');
+      setLlmMetrics(INITIAL_LLM_METRICS);
       const configuredScenario =
         (savedConfig && savedConfig.scenario) || scenario || selectedScenario;
 
@@ -786,6 +800,7 @@ function PracticeMode() {
       }
 
       setSessionId(data.session_id);
+      sessionStorage.setItem('activePracticeSessionId', data.session_id);
       const startProp = (data?.state?.current_proposal && Object.keys(data.state.current_proposal).length > 0)
         ? data.state.current_proposal
         : buildDefaultProposal(configuredScenario);
@@ -850,7 +865,56 @@ function PracticeMode() {
       return;
     }
 
-    startSession(initialScenario);
+    const checkAndResumeSession = async () => {
+      const savedSid = sessionStorage.getItem('activePracticeSessionId');
+      if (savedSid) {
+        try {
+          const res = await fetch(`${API_URL}/api/negotiation/session/${savedSid}`);
+          if (res.ok) {
+            const data = await res.json();
+            const state = data?.state;
+            if (state && state.practice_mode) {
+              setSessionId(savedSid);
+              setRound(Number(state.current_round || 1));
+              setConsensus(Number(state.consensus || 0));
+              setSessionStatus(state.negotiation_ended ? 'Completed' : 'Active');
+              setStatus(state.status || (state.negotiation_ended ? 'Negotiation complete' : 'Your turn'));
+              setAwaitingFinalDecision(Boolean(state.awaiting_final_decision));
+              setFinalAllocation(state.final_allocation || null);
+              setFinalReport(state.final_report || null);
+              if (state.current_proposal && Object.keys(state.current_proposal).length > 0) {
+                setCurrentProposal(state.current_proposal);
+              }
+              if (state.gemini_metrics) {
+                setLlmMetrics(state.gemini_metrics);
+              }
+
+              if (Array.isArray(state.history) && state.history.length > 0) {
+                const restoredMsgs = state.history.map((h) => ({
+                  sender: h.agent || 'AI Agent',
+                  text: h.speech || h.message || '',
+                  action: h.action || 'COUNTER',
+                  proposal: h.parsed_proposal || null,
+                  reason: h.reason || '',
+                  stance: h.stance || '',
+                  evaluation: h.evaluation || null,
+                  round: h.round,
+                }));
+                setMessages(restoredMsgs);
+              }
+              return; // Resumed successfully without restart!
+            }
+          }
+        } catch (err) {
+          console.warn('Could not restore practice session:', err);
+        }
+        sessionStorage.removeItem('activePracticeSessionId');
+      }
+
+      startSession(initialScenario);
+    };
+
+    checkAndResumeSession();
   }, []);
 
   // --------------------------------------------------
@@ -905,6 +969,7 @@ function PracticeMode() {
 
     setRound(1);
 
+    sessionStorage.removeItem('activePracticeSessionId');
     setSessionId(null);
 
     setSessionStatus('Active');
@@ -1515,6 +1580,7 @@ function PracticeMode() {
   // --------------------------------------------------
 
   const handleNewNegotiation = async () => {
+    sessionStorage.removeItem('activePracticeSessionId');
     setMessages([]);
     setFinalAllocation(null);
     setFinalReport(null);
@@ -1816,7 +1882,7 @@ function PracticeMode() {
           <div className="p-6">
             <div className="relative">
               {/* Conversation is the primary focus */}
-              <div className="max-h-[680px] overflow-y-auto pr-2">
+              <div className="min-h-[850px] max-h-[1400px] overflow-y-auto pr-2">
                 {messages.length > 0 && (
                   <div className="absolute left-[6px] top-0 bottom-0 w-0.5 bg-[var(--border-subtle)] rounded-full" />
                 )}
@@ -2218,7 +2284,7 @@ function PracticeMode() {
 
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <label className="text-xs font-bold uppercase tracking-wider text-[var(--text-1)]">
                       Negotiation Action:
                     </label>
                     <select
@@ -2239,7 +2305,7 @@ function PracticeMode() {
                     </select>
                   </div>
 
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-[var(--text-muted)]">
                     {round === 1
                       ? 'You are submitting the initial master allocation for AI agencies to review.'
                       : action === 'Accept Offer'
@@ -2249,9 +2315,9 @@ function PracticeMode() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-[var(--text-1)] flex items-center justify-between">
                     <span>Your Negotiation Message</span>
-                    <span className="text-[11px] font-normal text-slate-400">Explain your reasoning to the AI agents</span>
+                    <span className="text-[11px] font-normal text-[var(--text-muted)]">Explain your reasoning to the AI agents</span>
                   </label>
                   <textarea
                     rows={3}
@@ -2259,7 +2325,7 @@ function PracticeMode() {
                     onChange={(event) => setMessage(event.target.value)}
                     disabled={loading || status !== 'Your turn'}
                     placeholder={round === 1 ? "e.g., North Sector is critical so I prioritized rescue teams and medical aid there. Central needs debris equipment and shelters, while South retains sufficient medical aid for its population..." : "e.g., Addressing Government's concern about rescue teams, while balancing NGO's medical priorities..."}
-                    className="w-full rounded-xl border border-slate-300 p-3.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 leading-relaxed"
+                    className="w-full rounded-xl border border-[var(--border-card)] p-3.5 text-sm text-[var(--text-1)] placeholder:text-[var(--text-muted)] outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50 leading-relaxed shadow-inner" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-1)' }}
                   />
                 </div>
 
@@ -2405,7 +2471,7 @@ function PracticeMode() {
 
         </section>
 
-        <aside className="space-y-6 xl:sticky xl:top-6">
+        <aside className="space-y-6 xl:sticky xl:top-20 xl:self-start xl:max-h-[calc(100vh-5.5rem)] xl:overflow-y-auto custom-scrollbar xl:pr-1">
 
           {/* CONFIGURATION DETAILS */}
           <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
@@ -2631,6 +2697,16 @@ function PracticeMode() {
         consensus >= 1.0) && (() => {
         const consensusReached = sessionStatus === 'Agreement reached' || consensus >= 1.0;
         
+        // Format history array for OutcomeCharts from practice messages
+        const practiceHistory = (messages || []).map((m) => ({
+          agent: m.sender === 'You' ? 'Human Participant' : m.sender,
+          round: m.round || 1,
+          action: m.action || 'COUNTER',
+          proposal: m.proposal || m.parsed_proposal || {},
+          parsed_proposal: m.parsed_proposal || m.proposal || {},
+          message: m.text || m.message || '',
+        }));
+
         // 1. Compute Initial Demands for each participant
         const initialDemands = messages.reduce((acc, item) => {
           const rawSender = item.sender === 'You' ? 'You (Human Participant)' : item.sender;
@@ -2726,12 +2802,12 @@ function PracticeMode() {
         const outcomeAnalysis = finalReport?.outcome_analysis;
 
         return (
-          <div className="mt-8 rounded-[1.75rem] border border-emerald-200 bg-emerald-50/80 p-6 sm:p-8 shadow-sm">
+          <div className="mt-8 rounded-[1.75rem] border border-[var(--border-card)] p-6 sm:p-8 shadow-sm backdrop-blur-md" style={{ background: 'var(--bg-surface)' }}>
             {/* Header */}
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Outcome ready</p>
-                <p className="mt-1 text-sm text-emerald-800">Review the complete agreement and negotiation timeline.</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-emerald-400">Outcome ready</p>
+                <p className="mt-1 text-sm text-[var(--text-muted)]">Review the complete agreement and negotiation timeline.</p>
               </div>
               <button
                 type="button"
@@ -2741,11 +2817,11 @@ function PracticeMode() {
                 View outcome
               </button>
             </div>
-            <div className="flex items-center gap-2.5 font-bold text-emerald-800 text-xl sm:text-2xl mb-2">
-              <CheckCircle size={26} className="text-emerald-700" />
+            <div className="flex items-center gap-2.5 font-bold text-[var(--text-1)] text-xl sm:text-2xl mb-2">
+              <CheckCircle size={26} className="text-emerald-400" />
               Final Negotiation Report
             </div>
-            <p className="text-sm text-emerald-700/90 mb-6 font-medium">
+            <p className="text-sm text-[var(--text-2)] mb-6 font-medium">
               {consensusReached
                 ? 'The negotiation concluded successfully. Below are the opening positions and the final agreed allocation.'
                 : 'The negotiation concluded without unanimous agreement. Below are the opening positions and the final proposal.'}
@@ -2755,7 +2831,7 @@ function PracticeMode() {
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Opening demands */}
               <div>
-                <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+                <h3 className="text-xs font-bold text-[var(--text-1)] uppercase tracking-wider mb-4">
                   Initial Requirements (Opening Demands)
                 </h3>
                 <div className="space-y-4">
@@ -2892,14 +2968,14 @@ function PracticeMode() {
             </div>
 
             {/* ── RESOURCE VARIANCE & DIFFERENCE ANALYSIS (DIFFERENCE OCCURRED) ── */}
-            <div className="mt-8 pt-6 border-t border-emerald-200/80">
+            <div className="mt-8 pt-6 border-t border-[var(--border-subtle)]">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
                 <div>
-                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-emerald-900 flex items-center gap-2">
-                    <BarChart3 size={18} className="text-emerald-700" />
+                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-[var(--text-1)] flex items-center gap-2">
+                    <BarChart3 size={18} className="text-emerald-400" />
                     Resource Variance & Difference Analysis
                   </h3>
-                  <p className="text-xs text-emerald-700/80 mt-0.5">
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
                     Shows how much difference occurred between initial demands and final agreed allocation across all sectors.
                   </p>
                 </div>
@@ -2907,7 +2983,7 @@ function PracticeMode() {
                 {/* Comparison Source Filter Tabs */}
                 {Object.keys(initialDemands).length > 1 && (
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-semibold text-emerald-800">Compared against:</span>
+                    <span className="text-xs font-semibold text-[var(--text-muted)]">Compared against:</span>
                     <button
                       type="button"
                       onClick={() => setSelectedDiffSource('opening')}
@@ -2941,7 +3017,7 @@ function PracticeMode() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
                 <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Reallocated</p>
-                  <p className="mt-1 text-lg font-extrabold text-emerald-800">
+                  <p className="mt-1 text-lg font-extrabold text-emerald-400">
                     {totalReallocated} <span className="text-xs font-normal text-slate-500">units</span>
                   </p>
                   <p className="text-[11px] text-slate-500 mt-0.5">Resources shifted to meet needs</p>
@@ -2949,23 +3025,23 @@ function PracticeMode() {
 
                 <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Increased Allocations</p>
-                  <p className="mt-1 text-lg font-extrabold text-emerald-700">
+                  <p className="mt-1 text-lg font-extrabold text-emerald-400">
                     {increasedCount} <span className="text-xs font-normal text-slate-500">resources</span>
                   </p>
-                  <p className="text-[11px] text-emerald-600 mt-0.5">Secured higher shares</p>
+                  <p className="text-[11px] text-emerald-400/80 mt-0.5">Secured higher shares</p>
                 </div>
 
                 <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Concessions Made</p>
-                  <p className="mt-1 text-lg font-extrabold text-amber-700">
+                  <p className="mt-1 text-lg font-extrabold text-amber-400">
                     {concededCount} <span className="text-xs font-normal text-slate-500">resources</span>
                   </p>
-                  <p className="text-[11px] text-amber-600 mt-0.5">{totalConceded} units relinquished</p>
+                  <p className="text-[11px] text-amber-400/80 mt-0.5">{totalConceded} units relinquished</p>
                 </div>
 
                 <div className="rounded-xl border border-[var(--border-subtle)] p-3.5 shadow-2xs" style={{ background: 'var(--bg-surface-2)' }}>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Maintained Unchanged</p>
-                  <p className="mt-1 text-lg font-extrabold text-slate-800">
+                  <p className="mt-1 text-lg font-extrabold text-[var(--text-1)]">
                     {unchangedCount} <span className="text-xs font-normal text-slate-500">resources</span>
                   </p>
                   <p className="text-[11px] text-slate-500 mt-0.5">Preserved from opening demand</p>
@@ -2976,7 +3052,7 @@ function PracticeMode() {
               <div className="overflow-hidden rounded-xl border border-[var(--border-subtle)] shadow-sm" style={{ background: 'var(--bg-surface-2)' }}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-emerald-50/70 text-[11px] font-extrabold uppercase tracking-wider text-emerald-900 border-b border-emerald-200">
+                    <thead className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--text-1)] border-b border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface)' }}>
                       <tr>
                         <th className="px-4 py-3">Sector / District</th>
                         <th className="px-4 py-3">Resource Item</th>
@@ -2986,7 +3062,7 @@ function PracticeMode() {
                         <th className="px-4 py-3 text-right">Variance Trend</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-[var(--border-subtle)]">
                       {differences.length > 0 ? (
                         differences.map((item, idx) => {
                           const isPos = item.diff > 0;
@@ -2994,27 +3070,27 @@ function PracticeMode() {
                           return (
                             <tr
                               key={`${item.sector}-${item.resource}-${idx}`}
-                              className={`transition hover:bg-slate-50/70 ${
-                                isPos ? 'bg-emerald-50/30' : isNeg ? 'bg-amber-50/20' : ''
+                              className={`transition hover:bg-white/5 ${
+                                isPos ? 'bg-emerald-500/5' : isNeg ? 'bg-amber-500/5' : ''
                               }`}
                             >
-                              <td className="px-4 py-3 font-bold text-slate-800">
+                              <td className="px-4 py-3 font-bold text-[var(--text-1)]">
                                 {item.sector}
                               </td>
-                              <td className="px-4 py-3 font-semibold text-slate-700">
+                              <td className="px-4 py-3 font-semibold text-[var(--text-2)]">
                                 {item.resource}
                               </td>
-                              <td className="px-4 py-3 text-center font-semibold text-slate-600">
+                              <td className="px-4 py-3 text-center font-mono font-semibold text-[var(--text-muted)]">
                                 {item.initial}
                               </td>
-                              <td className="px-4 py-3 text-center font-bold text-slate-900">
+                              <td className="px-4 py-3 text-center font-mono font-bold text-[var(--text-1)]">
                                 {item.final}
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <span
                                   className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${
                                     isPos
-                                      ? 'bg-emerald-100 text-emerald-800'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                       : isNeg
                                       ? 'bg-amber-100 text-amber-800'
                                       : 'bg-slate-100 text-slate-600'
@@ -3054,13 +3130,27 @@ function PracticeMode() {
                 </div>
               </div>
 
+              {/* Interactive Visual Charts */}
+              {outcomeAnalysis && (
+                <div className="mt-6">
+                  <ErrorBoundary title="Practice Mode Analytics Notice">
+                    <OutcomeCharts
+                      outcomeAnalysis={outcomeAnalysis}
+                      history={practiceHistory}
+                      scenarioResources={savedConfig?.resourceQuantities || selectedScenario?.resourceQuantities || {}}
+                      participants={['Human Participant', ...(savedConfig?.agents || selectedScenario?.agents || []).map((a) => a.name)]}
+                    />
+                  </ErrorBoundary>
+                </div>
+              )}
+
               {/* Optional Expandable Detailed Outcome Summary */}
               {outcomeAnalysis && (
-                <div className="mt-6 pt-4 border-t border-emerald-200/60">
+                <div className="mt-6 pt-4 border-t border-[var(--border-subtle)]">
                   <button
                     type="button"
                     onClick={() => setShowAdvancedOutcome(!showAdvancedOutcome)}
-                    className="flex items-center gap-2 text-xs font-bold text-emerald-800 hover:text-emerald-900"
+                    className="flex items-center gap-2 text-xs font-bold text-emerald-400 hover:text-emerald-300 transition"
                   >
                     {showAdvancedOutcome ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                     {showAdvancedOutcome ? 'Hide Advanced Metrics & Concession Breakdown' : 'Show Advanced Metrics & Concession Breakdown'}
@@ -3069,7 +3159,7 @@ function PracticeMode() {
                   {showAdvancedOutcome && (
                     <div className="mt-4 space-y-4">
                       <div className="rounded-xl border border-[var(--border-subtle)] p-4" style={{ background: 'var(--bg-surface-2)' }}>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 mb-3">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-1)] mb-3">
                           Consensus Outcome Summary
                         </h4>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
@@ -3082,9 +3172,9 @@ function PracticeMode() {
                             ['Accepted Participants', outcomeAnalysis.agreement_terms?.accepted_participants?.join(', ')],
                             ['Total Participants', outcomeAnalysis.agreement_terms?.total_participants],
                           ].map(([label, value]) => (
-                            <div key={label} className="rounded-lg bg-slate-50 p-2.5">
+                            <div key={label} className="rounded-lg p-2.5 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface)' }}>
                               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-                              <p className="mt-0.5 font-semibold text-slate-800">{displayValue(value)}</p>
+                              <p className="mt-0.5 font-semibold text-[var(--text-1)]">{displayValue(value)}</p>
                             </div>
                           ))}
                         </div>
@@ -3093,16 +3183,16 @@ function PracticeMode() {
                       {/* Per-Agent Concession Patterns */}
                       {Object.entries(outcomeAnalysis.concession_patterns || {}).length > 0 && (
                         <div className="rounded-xl border border-[var(--border-subtle)] p-4" style={{ background: 'var(--bg-surface-2)' }}>
-                          <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 mb-3">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-1)] mb-3">
                             Participant Concession Patterns
                           </h4>
                           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-xs">
                             {Object.entries(outcomeAnalysis.concession_patterns).map(([agentName, pattern]) => (
-                              <div key={agentName} className="rounded-lg bg-slate-50 p-3">
-                                <p className="font-bold text-slate-800 mb-1">{agentName}</p>
-                                <p className="text-slate-600">Concessions made: <strong>{displayValue(pattern?.concession_count)}</strong></p>
-                                <p className="text-slate-600">Quantity conceded: <strong>{displayValue(pattern?.total_quantity_conceded)}</strong></p>
-                                <p className="text-slate-600">Contributed to agreement: <strong>{displayBoolean(pattern?.contributed_to_final_agreement)}</strong></p>
+                              <div key={agentName} className="rounded-lg p-3 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface)' }}>
+                                <p className="font-bold text-[var(--text-1)] mb-1">{agentName}</p>
+                                <p className="text-[var(--text-muted)]">Concessions made: <strong>{displayValue(pattern?.concession_count)}</strong></p>
+                                <p className="text-[var(--text-muted)]">Quantity conceded: <strong>{displayValue(pattern?.total_quantity_conceded)}</strong></p>
+                                <p className="text-[var(--text-muted)]">Contributed to agreement: <strong>{displayBoolean(pattern?.contributed_to_final_agreement)}</strong></p>
                               </div>
                             ))}
                           </div>

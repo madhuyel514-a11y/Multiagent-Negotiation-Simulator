@@ -159,6 +159,31 @@ async def start_negotiation(body: StartRequest):
 
 
 # =========================================================
+# GET SESSION STATE (RESTORE ACROSS PAGE NAVIGATION)
+# =========================================================
+
+@app.get("/api/negotiation/session/{session_id}")
+def get_negotiation_session(session_id: str):
+    """
+    Returns active session state from backend memory.
+    Allows frontend to resume an ongoing or completed negotiation
+    when user navigates between pages without starting over.
+    """
+    if not orchestrator.session_exists(session_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found in active backend memory",
+        )
+
+    state = orchestrator.get_state(session_id)
+    return {
+        "success": True,
+        "session_id": session_id,
+        "state": state,
+    }
+
+
+# =========================================================
 # NEGOTIATION TURN
 # =========================================================
 

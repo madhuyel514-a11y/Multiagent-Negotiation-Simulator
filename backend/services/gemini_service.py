@@ -40,6 +40,19 @@ def get_gemini_metrics():
     }
 
 
+def reset_gemini_metrics():
+    """Reset LLM metrics to zero so each new negotiation starts completely fresh."""
+    global _GEMINI_METRICS
+    _GEMINI_METRICS = {
+        "total_requests": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_tokens": 0,
+        "total_latency": 0.0,
+    }
+    return get_gemini_metrics()
+
+
 def _friendly_agent_name(agent_name=None, fallback_agent=None):
     if agent_name and str(agent_name).strip():
         return str(agent_name).strip()
