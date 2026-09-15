@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Activity, CheckCircle, ClipboardList, Shield, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import OutcomeCharts from '../components/OutcomeCharts';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -219,6 +219,69 @@ function AllocationBreakdown({ proposal, agentStyle, style }) {
   );
 }
 
+function ProposalTable({ proposal }) {
+  if (!proposal || Object.keys(proposal).length === 0) return null;
+
+  const nested = Object.values(proposal).some(
+    (value) => value && typeof value === 'object' && !Array.isArray(value)
+  );
+
+  if (!nested) {
+    return (
+      <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
+        <table className="w-full min-w-[260px] text-left text-xs">
+          <thead style={{ background: 'var(--bg-surface-2)', color: 'var(--text-3)' }}>
+            <tr>
+              <th className="px-3 py-2 font-semibold">Resource</th>
+              <th className="px-3 py-2 text-right font-semibold">Allocation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(proposal).map(([resource, amount]) => (
+              <tr key={resource} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                <td className="px-3 py-2" style={{ color: 'var(--text-2)' }}>{resource}</td>
+                <td className="px-3 py-2 text-right font-bold" style={{ color: 'var(--accent)' }}>{amount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  const districts = Object.keys(proposal);
+  const resources = Array.from(new Set(
+    districts.flatMap((district) => Object.keys(proposal[district] || {}))
+  ));
+
+  return (
+    <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
+      <table className="w-full min-w-[420px] text-left text-xs">
+        <thead style={{ background: 'var(--bg-surface-2)', color: 'var(--text-3)' }}>
+          <tr>
+            <th className="px-3 py-2 font-semibold">Resource</th>
+            {districts.map((district) => (
+              <th key={district} className="px-3 py-2 text-right font-semibold">{district}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {resources.map((resource) => (
+            <tr key={resource} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <td className="px-3 py-2 font-medium" style={{ color: 'var(--text-2)' }}>{resource}</td>
+              {districts.map((district) => (
+                <td key={`${district}-${resource}`} className="px-3 py-2 text-right font-bold" style={{ color: 'var(--accent)' }}>
+                  {proposal[district]?.[resource] ?? 0}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function splitMessage(message) {
   if (!message) return { summary: '', full: '', hasMore: false };
   const cutMatch = message.match(/\b[A-Z][A-Za-z\s]+ Allocation:/);
@@ -331,6 +394,11 @@ function TranscriptEntry({ item, previousProposal }) {
 // ─────────────────────────────────────────────
 function NegotiationArena() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const replaySessionId = location.pathname === '/negotiation/replay'
+    ? new URLSearchParams(location.search).get('session_id')
+    : null;
+  const isReplay = Boolean(replaySessionId);
   const [scenario, setScenario] = useState(null);
   const [config, setConfig] = useState(null);
   const [sessionId, setSessionId] = useState(null);
@@ -355,6 +423,7 @@ function NegotiationArena() {
   const transcriptEndRef = useRef(null);
 
   useEffect(() => {
+    if (isReplay) return;
     try {
       const storedConfig = localStorage.getItem('negotiationConfig');
       const storedScenario = localStorage.getItem('selectedScenario');
@@ -367,7 +436,7 @@ function NegotiationArena() {
     } catch (error) {
       setApiError(`Local configuration error: ${error.message}`);
     }
-  }, []);
+  }, [isReplay]);
 
   // Auto-scroll transcript to bottom on new entries
   useEffect(() => {
@@ -400,7 +469,7 @@ function NegotiationArena() {
     if (incomingMetrics) setGeminiMetrics(incomingMetrics);
 
     const completedReport = state.final_report ?? data?.final_report;
-    if (completedReport || state.negotiation_ended || data?.negotiation_ended) {
+    if (!isReplay && (completedReport || state.negotiation_ended || data?.negotiation_ended)) {
       localStorage.setItem('negotiationOutcome', JSON.stringify({
         final_report: completedReport,
         final_allocation: state.final_allocation ?? data?.final_allocation ?? null,
@@ -412,6 +481,38 @@ function NegotiationArena() {
       }));
     }
   };
+
+  useEffect(() => {
+    if (!replaySessionId) return undefined;
+    let cancelled = false;
+
+    async function loadReplay() {
+      setLoading(true);
+      setApiError(null);
+      try {
+        const response = await fetch(`${API_BASE}/api/history/${encodeURIComponent(replaySessionId)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Failed to load historical negotiation.');
+        if (cancelled) return;
+        const stored = data.session || {};
+        setScenario(stored.scenario || null);
+        setConfig({
+          agents: stored.agents || [],
+          max_rounds: stored.max_rounds,
+          resourceQuantities: stored.resource_quantities || stored.scenario?.resourceQuantities || {},
+        });
+        applyState({ session_id: replaySessionId, state: stored });
+        setIsAutoRunning(false);
+      } catch (error) {
+        if (!cancelled) setApiError(error.message || 'Failed to load historical negotiation.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadReplay();
+    return () => { cancelled = true; };
+  }, [replaySessionId]);
 
   const startSession = async () => {
     if (!scenario || !config) return null;
@@ -439,6 +540,7 @@ function NegotiationArena() {
   };
 
   const runTurn = async () => {
+    if (isReplay) return;
     if (!scenario || !config) {
       setApiError('Select a scenario and configure the agents first.');
       return;
@@ -470,6 +572,7 @@ function NegotiationArena() {
   };
 
   useEffect(() => {
+    if (isReplay) return;
     const checkAndResumeSession = async () => {
       if (!scenario || !config || startedRef.current) return;
       startedRef.current = true;
@@ -497,17 +600,18 @@ function NegotiationArena() {
     if (scenario && config) {
       checkAndResumeSession();
     }
-  }, [scenario, config]);
+  }, [isReplay, scenario, config]);
 
   useEffect(() => {
-    if (isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
+    if (!isReplay && isAutoRunning && !loading && !negotiationEnded && !consensusReached) {
       runTurn();
     } else if (negotiationEnded || consensusReached) {
       setIsAutoRunning(false);
     }
-  }, [isAutoRunning, loading, negotiationEnded, consensusReached]);
+  }, [isReplay, isAutoRunning, loading, negotiationEnded, consensusReached]);
 
   const reset = async () => {
+    if (isReplay) return;
     if (!scenario || !config) return;
     sessionStorage.removeItem('activeArenaSessionId');
     setSessionId(null);
@@ -565,6 +669,9 @@ function NegotiationArena() {
 
   const progressPct = maxRounds > 0 ? Math.min(100, ((currentRound - 1) / maxRounds) * 100) : 0;
   const outcomeAnalysis = finalReport?.outcome_analysis;
+  const replayHasOutcome = isReplay && (
+    finalReport || finalAllocation || ['agreement_reached', 'negotiation_breakdown', 'deadlock_no_consensus', 'max_rounds_reached'].includes(status)
+  );
   const latestActions = getLatestAgentActions(history);
   const configuredAgents = config?.agents || [];
   const participantNames = configuredAgents.map((agent) => agent.name).filter(Boolean);
@@ -710,11 +817,12 @@ function NegotiationArena() {
             Round {currentRound || 1} / {maxRounds}
           </span>
           <span className={`badge ${consensusReached ? 'status-agreement' : negotiationEnded ? 'status-breakdown' : 'status-ongoing'}`}>
-            {consensusReached ? '✓ Agreement' : negotiationEnded ? 'No Consensus' : '⚡ Live'}
+            {isReplay ? (consensusReached ? '✓ Agreement' : status.replace(/_/g, ' ')) : consensusReached ? '✓ Agreement' : negotiationEnded ? 'No Consensus' : '⚡ Live'}
           </span>
           <span className="badge" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
             {acceptedNames.length}/{totalAgents || participantNames.length} accepted
           </span>
+          {isReplay && <span className="badge" style={{ background: 'var(--bg-surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>Read-only Replay</span>}
           {loading && (
             <span className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-3)' }}>
               <span className="flex gap-1">
@@ -766,7 +874,12 @@ function NegotiationArena() {
         {/* Controls */}
         <div className="card p-4">
           <p className="section-title">Controls</p>
-          <div className="flex flex-wrap gap-2">
+          {isReplay ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs" style={{ color: 'var(--text-3)' }}>Historical session</span>
+              <button type="button" onClick={() => navigate('/history')} className="btn-ghost px-3 py-2 text-xs">Back to History</button>
+            </div>
+          ) : <div className="flex flex-wrap gap-2">
             <button onClick={runTurn} disabled={loading || negotiationEnded || consensusReached || isAutoRunning}
               className="btn-accent flex items-center gap-1.5 px-4 py-2 text-xs disabled:opacity-40">
               {loading && !isAutoRunning ? <><span className="flex gap-0.5"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></span> Thinking</> : 'Next Turn'}
@@ -778,7 +891,7 @@ function NegotiationArena() {
             </button>
             <button onClick={reset} disabled={loading}
               className="btn-ghost px-4 py-2 text-xs disabled:opacity-40">Reset</button>
-          </div>
+          </div>}
         </div>
       </div>
 
@@ -915,7 +1028,7 @@ function NegotiationArena() {
               <p className="mb-3 text-[10px]" style={{ color: 'var(--text-3)' }}>
                 {consensusReached ? 'Final agreed' : `By: ${proposalSource || 'N/A'}`}
               </p>
-              <AllocationBreakdown proposal={displayProposal} style={AGENT_STYLES.default} />
+              <ProposalTable proposal={displayProposal} />
             </div>
           )}
 
@@ -925,7 +1038,7 @@ function NegotiationArena() {
             <div className="space-y-1.5">
               {config?.resourceQuantities && Object.keys(config.resourceQuantities).length > 0 ? (
                 Object.entries(config.resourceQuantities).map(([resource, quantity]) => (
-                  <div key={resource} className="flex justify-between text-xs py-1" style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-2)' }}>
+                  <div key={resource} className="flex items-center justify-between gap-3 py-1.5 text-xs" style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-2)' }}>
                     <span>{resource}</span>
                     <span className="font-bold" style={{ color: 'var(--accent)' }}>{quantity}</span>
                   </div>
@@ -955,7 +1068,7 @@ function NegotiationArena() {
       </div>
 
       {/* ── Final Report Banner ── */}
-      {(consensusReached || negotiationEnded) && (
+      {(consensusReached || negotiationEnded || replayHasOutcome) && (
         <div className="rounded-2xl p-5" style={{ background: consensusReached ? 'rgba(16,185,129,0.08)' : 'var(--bg-surface)', border: `1px solid ${consensusReached ? 'rgba(16,185,129,0.25)' : 'var(--border)'}` }}>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -963,7 +1076,7 @@ function NegotiationArena() {
               <p className="mt-1 text-sm" style={{ color: 'var(--text-2)' }}>Review the complete agreement and negotiation timeline.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => navigate('/outcome')} className="btn-accent px-5 py-2 text-sm">View Outcome</button>
+              <button type="button" onClick={() => navigate(isReplay ? `/outcome?session_id=${encodeURIComponent(replaySessionId)}` : '/outcome')} className="btn-accent px-5 py-2 text-sm">View Outcome</button>
               {hasCompletedNegotiationData && (
                 <>
                   <button type="button" onClick={downloadTranscript} className="btn-ghost px-4 py-2 text-xs">Download Transcript</button>

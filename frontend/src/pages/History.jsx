@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Clock3,
   Trash2,
@@ -373,11 +374,10 @@ function DetailModal({ sessionId, initialTab = 'visualize', onClose }) {
 // MAIN HISTORY PAGE
 // ─────────────────────────────────────────────────────────────
 export default function History() {
+  const navigate = useNavigate();
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedId, setSelectedId] = useState(null);
-  const [modalTab, setModalTab] = useState('visualize');
   const [confirmClear, setConfirmClear] = useState(false);
 
   async function load() {
@@ -561,8 +561,7 @@ export default function History() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedId(s.session_id);
-                    setModalTab('visualize');
+                    navigate(`/negotiation/replay?session_id=${encodeURIComponent(s.session_id)}`);
                   }}
                   className="btn-accent flex items-center justify-center gap-1.5 py-2 text-xs font-semibold shadow-xs"
                 >
@@ -571,10 +570,7 @@ export default function History() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedId(s.session_id);
-                    setModalTab('transcript');
-                  }}
+                  onClick={() => navigate(`/negotiation/replay?session_id=${encodeURIComponent(s.session_id)}`)}
                   className="btn-ghost flex items-center justify-center gap-1.5 py-2 text-xs font-semibold"
                   style={{ border: '1px solid var(--border)' }}
                 >
@@ -585,15 +581,6 @@ export default function History() {
             </div>
           ))}
         </div>
-      )}
-
-      {/* Detail & Visualization Modal */}
-      {selectedId && (
-        <DetailModal
-          sessionId={selectedId}
-          initialTab={modalTab}
-          onClose={() => setSelectedId(null)}
-        />
       )}
 
       {/* Confirm Clear Modal */}

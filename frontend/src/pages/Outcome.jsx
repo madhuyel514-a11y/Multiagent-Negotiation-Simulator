@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, XCircle, Clock3, Users, TrendingUp, TrendingDown, Minus, Award, ChevronDown, ChevronUp } from 'lucide-react';
 import OutcomeCharts from '../components/OutcomeCharts';
 import ErrorBoundary from '../components/ErrorBoundary';
+
+const API_BASE = 'http://127.0.0.1:8000';
 
 function fmt(v) { return v == null || v === '' ? 'N/A' : String(v); }
 
@@ -67,22 +70,59 @@ function TimelineEvent({ event, index }) {
 }
 
 export default function Outcome() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const historicalSessionId = new URLSearchParams(location.search).get('session_id');
   const [saved, setSaved] = useState(null);
+  const [loading, setLoading] = useState(Boolean(historicalSessionId));
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    if (historicalSessionId) {
+      let cancelled = false;
+      (async () => {
+        try {
+          const response = await fetch(`${API_BASE}/api/history/${encodeURIComponent(historicalSessionId)}`);
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || 'Failed to load historical outcome.');
+          if (!cancelled) setSaved(data.session || null);
+        } catch (loadError) {
+          if (!cancelled) setError(loadError.message || 'Failed to load historical outcome.');
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+
     try { const v = localStorage.getItem('negotiationOutcome'); setSaved(v ? JSON.parse(v) : null); } catch { setSaved(null); }
-  }, []);
+    setLoading(false);
+    return undefined;
+  }, [historicalSessionId]);
+
+  if (loading) return <div className="card p-6 text-sm" style={{ color: 'var(--text-2)' }}>Loading negotiation outcome...</div>;
+  if (error) return (
+    <div className="space-y-3">
+      <div className="rounded-xl p-4 text-sm" style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>{error}</div>
+      <button type="button" onClick={() => navigate(historicalSessionId ? `/negotiation/replay?session_id=${encodeURIComponent(historicalSessionId)}` : '/negotiation')} className="btn-accent px-4 py-2 text-xs">Back</button>
+    </div>
+  );
 
   const analysis = saved?.final_report?.outcome_analysis || saved?.final_report || {};
   const terms = analysis.agreement_terms || {};
   const allocation = analysis.final_allocation ?? terms.final_allocation ?? saved?.final_allocation;
-  const agreed = analysis.outcome === 'agreement_reached' || terms.unanimous_agreement === true;
+  const agreed = saved?.consensus_reached === true || analysis.outcome === 'agreement_reached' || terms.unanimous_agreement === true;
   const performance = analysis.agent_performance || {};
   const concessions = analysis.concession_patterns || {};
   const timeline = analysis.concession_timeline || [];
   const participants = Object.keys(performance).length > 0
     ? Object.keys(performance)
-    : Array.from(new Set([...(terms.accepted_participants || []), ...timeline.map((e) => e.agent).filter(Boolean)]));
+    : Array.from(new Set([
+      ...(saved?.agents || []).map((agent) => agent.name).filter(Boolean),
+      ...(saved?.practice_mode && saved?.history?.some((event) => event.agent === 'Human Participant') ? ['Human Participant'] : []),
+      ...(terms.accepted_participants || []),
+      ...timeline.map((e) => e.agent).filter(Boolean),
+    ]));
 
   const isNested = allocation && typeof allocation === 'object' && Object.values(allocation).some((v) => v && typeof v === 'object' && !Array.isArray(v));
 

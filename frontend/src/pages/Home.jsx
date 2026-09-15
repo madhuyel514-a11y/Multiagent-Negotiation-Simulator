@@ -120,7 +120,7 @@ export default function Home() {
           </div>
           <div className="mt-1.5 flex items-center gap-2 text-xs font-semibold text-white/80">
             <Zap size={14} style={{ color: 'var(--accent)' }} />
-            Gemini 1.5 Flash Powered
+            Powered by Gemini + Groq AI
           </div>
           <div className="mt-1.5 flex items-center gap-2 text-xs font-semibold text-white/80">
             <Clock size={14} className="text-blue-400" />

@@ -115,7 +115,7 @@ export default function Layout({ children }) {
 
         {/* Footer info */}
         <p className="text-[10px] text-center" style={{ color: 'var(--text-3)' }}>
-          Powered by Gemini AI · FastAPI · React
+          Powered by Gemini + Groq AI · FastAPI · React
         </p>
       </div>
     </div>

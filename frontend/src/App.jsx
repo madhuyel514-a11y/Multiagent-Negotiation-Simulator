@@ -41,6 +41,7 @@ function App() {
             <Route path="/scenarios" element={<ScenarioSelection />} />
             <Route path="/configure" element={<AgentConfiguration />} />
             <Route path="/negotiation" element={<NegotiationArena />} />
+            <Route path="/negotiation/replay" element={<NegotiationArena />} />
             <Route path="/practice"  element={<PracticeMode />} />
             <Route path="/outcome"   element={<Outcome />} />
             <Route path="/history"   element={<History />} />
