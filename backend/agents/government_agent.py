@@ -27,7 +27,7 @@ class GovernmentAgent(BaseAgent):
             for resource_name, quantity in resource_quantities.items():
                 prompt += f"\n  - {resource_name}: {quantity} units"
 
-        prompt += f"\n\nPrevious negotiation history: {context.get('history', [])}"
+        prompt += f"\n\n{self.format_compact_history(context.get('history', []))}"
 
         return await gemini_ask(
             prompt,
@@ -42,4 +42,5 @@ class GovernmentAgent(BaseAgent):
             scenario=context.get("scenario", {}),
             stubborn_until=context.get("stubborn_until"),
             practice_mode=context.get("practice_mode", False),
+            personality=self.personality,
         )

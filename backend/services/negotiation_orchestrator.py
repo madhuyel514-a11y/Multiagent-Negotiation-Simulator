@@ -1097,15 +1097,22 @@ class NegotiationOrchestrator:
         ):
             parsed_proposal = {}
         else:
-            parsed_proposal = self._parse_proposals_from_message(
-                message,
-                state.get("resource_quantities", {}),
-                recipient_names,
-            )
-            parsed_proposal = self._normalize_fallback_proposal(
-                parsed_proposal,
-                incoming_proposal,
-            )
+            raw_allocs = result.get("allocations")
+            if isinstance(raw_allocs, dict) and len(raw_allocs) > 0:
+                parsed_proposal = self._normalize_fallback_proposal(
+                    raw_allocs,
+                    incoming_proposal,
+                )
+            else:
+                parsed_proposal = self._parse_proposals_from_message(
+                    message,
+                    state.get("resource_quantities", {}),
+                    recipient_names,
+                )
+                parsed_proposal = self._normalize_fallback_proposal(
+                    parsed_proposal,
+                    incoming_proposal,
+                )
 
         llm_message = message
 

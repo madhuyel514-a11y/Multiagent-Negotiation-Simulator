@@ -65,6 +65,18 @@ const INITIAL_GEMINI_METRICS = {
   average_latency: 0,
 };
 
+const normalizeGeminiMetrics = (metrics) => {
+  if (!metrics) return INITIAL_GEMINI_METRICS;
+  const input = Number(metrics.total_input_tokens || 0);
+  const output = Number(metrics.total_output_tokens || 0);
+  return {
+    ...metrics,
+    total_input_tokens: input,
+    total_output_tokens: output,
+    total_tokens: input + output,
+  };
+};
+
 function getAgentStyle(agentName) {
   const n = (agentName || '').toLowerCase();
   if (n.includes('government')) return AGENT_STYLES.government;
@@ -466,7 +478,7 @@ function NegotiationArena() {
     setStatus(state.status || data?.negotiation_status || 'ongoing');
     setMaxRounds(Number(state.max_rounds ?? data?.max_rounds ?? 5));
     const incomingMetrics = data?.gemini_metrics || state?.gemini_metrics;
-    if (incomingMetrics) setGeminiMetrics(incomingMetrics);
+    if (incomingMetrics) setGeminiMetrics(normalizeGeminiMetrics(incomingMetrics));
 
     const completedReport = state.final_report ?? data?.final_report;
     if (!isReplay && (completedReport || state.negotiation_ended || data?.negotiation_ended)) {
@@ -1055,6 +1067,7 @@ function NegotiationArena() {
                 ['Requests', geminiMetrics.total_requests],
                 ['Input Tokens', geminiMetrics.total_input_tokens],
                 ['Output Tokens', geminiMetrics.total_output_tokens],
+                ['Total Tokens', (Number(geminiMetrics.total_input_tokens || 0) + Number(geminiMetrics.total_output_tokens || 0))],
                 ['Avg Latency', `${Number(geminiMetrics.average_latency || 0).toFixed(2)}s`],
               ].map(([name, value]) => (
                 <div key={name} className="flex justify-between text-xs" style={{ color: 'var(--text-2)' }}>
@@ -1085,11 +1098,11 @@ function NegotiationArena() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 font-semibold text-emerald-800 text-xl mb-2">
+          <div className="flex items-center gap-2 font-semibold text-emerald-500 dark:text-emerald-400 text-xl mb-2">
             <CheckCircle size={24} />
             Final Negotiation Report
           </div>
-          <p className="text-sm text-emerald-700/80 mb-6 font-medium">
+          <p className="text-sm text-emerald-600 dark:text-emerald-400 mb-6 font-medium">
             {consensusReached
               ? 'The negotiation concluded successfully. Below are the opening positions and the final agreed allocation.'
               : 'The negotiation concluded without unanimous agreement.'}
@@ -1098,7 +1111,7 @@ function NegotiationArena() {
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Opening demands */}
             <div>
-              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+              <h3 className="text-xs font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-4">
                 Initial Requirements (Opening Demands)
               </h3>
               <div className="space-y-4">
@@ -1108,14 +1121,14 @@ function NegotiationArena() {
                     <div key={agentName} className="rounded-xl p-4 shadow-sm border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface)' }}>
                       <div className="flex items-center gap-2 mb-3">
                         <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
-                        <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                        <p className="text-sm font-bold text-[var(--text-1)]">{agentName}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {demands && typeof demands === 'object' && !Array.isArray(demands) ? (
                           isNestedAllocation(demands) ? (
                             Object.entries(demands).map(([res, val]) => (
                               <div key={res} className="w-full">
-                                <p className="text-xs font-bold text-slate-700 mb-1">{res}</p>
+                                <p className="text-xs font-bold text-[var(--text-1)] mb-1">{res}</p>
                                 <div className="flex flex-wrap gap-1.5">
                                   {Object.entries(val).map(([resource, amount]) => (
                                     <span key={`${res}-${resource}`} className={`text-xs font-medium rounded-md px-2.5 py-1 ${s.chip}`}>
@@ -1133,7 +1146,7 @@ function NegotiationArena() {
                             ))
                           )
                         ) : (
-                          <span className="text-xs text-slate-500">{demands}</span>
+                          <span className="text-xs text-[var(--text-muted)]">{demands}</span>
                         )}
                       </div>
                     </div>
@@ -1144,7 +1157,7 @@ function NegotiationArena() {
 
             {/* Final allocation */}
             <div>
-              <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+              <h3 className="text-xs font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-4">
                 {consensusReached ? 'Final Agreed Allocation' : 'No Agreement Reached'}
               </h3>
               <div className="bg-[#009A65] text-white rounded-2xl p-6 shadow-md min-h-[160px]">
@@ -1197,7 +1210,7 @@ function NegotiationArena() {
               </ErrorBoundary>
 
               <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                   Outcome Summary
                 </h3>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1211,10 +1224,10 @@ function NegotiationArena() {
                     ['Total participants', outcomeAnalysis.agreement_terms?.total_participants],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-xl p-3 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
                         {label}
                       </p>
-                      <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+                      <p className="mt-1 break-words text-sm font-semibold text-[var(--text-1)]">
                         {displayValue(value)}
                       </p>
                     </div>
@@ -1223,12 +1236,12 @@ function NegotiationArena() {
               </section>
 
               <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                   Agreement Terms
                 </h3>
                 <div className="mt-4 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
                   <div>
-                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
+                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
                       Final allocation
                     </p>
                     {outcomeAnalysis.agreement_terms?.final_allocation ? (
@@ -1237,23 +1250,23 @@ function NegotiationArena() {
                         style={AGENT_STYLES.default}
                       />
                     ) : (
-                      <p className="text-sm text-slate-500">Not available</p>
+                      <p className="text-sm text-[var(--text-muted)]">Not available</p>
                     )}
                   </div>
                   <div>
-                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
+                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
                       Per-resource totals
                     </p>
                     <div className="space-y-2">
                       {Object.entries(outcomeAnalysis.agreement_terms?.per_resource_totals || {}).length > 0 ? (
                         Object.entries(outcomeAnalysis.agreement_terms.per_resource_totals).map(([resource, quantity]) => (
                           <div key={resource} className="flex justify-between rounded-lg px-3 py-2 text-sm border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
-                            <span className="text-slate-600">{resource}</span>
-                            <span className="font-semibold text-slate-800">{quantity}</span>
+                            <span className="text-[var(--text-2)]">{resource}</span>
+                            <span className="font-semibold text-[var(--text-1)]">{quantity}</span>
                           </div>
                         ))
                       ) : (
-                        <p className="text-sm text-slate-500">Not available</p>
+                        <p className="text-sm text-[var(--text-muted)]">Not available</p>
                       )}
                     </div>
                   </div>
@@ -1261,49 +1274,49 @@ function NegotiationArena() {
               </section>
 
               <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                   Concession Patterns
                 </h3>
                 <div className="mt-4 grid gap-4 lg:grid-cols-3">
                   {Object.entries(outcomeAnalysis.concession_patterns || {}).length > 0 ? (
                     Object.entries(outcomeAnalysis.concession_patterns).map(([agentName, pattern]) => (
                       <div key={agentName} className="rounded-xl p-4 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
-                        <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                        <p className="text-sm font-bold text-[var(--text-1)]">{agentName}</p>
                         <div className="mt-3 space-y-2 text-xs">
-                          <p className="font-semibold text-emerald-700">Increased</p>
+                          <p className="font-semibold text-emerald-400">Increased</p>
                           {Object.entries(pattern?.increased || {}).length > 0 ? (
                             Object.entries(pattern.increased).map(([resource, quantity]) => (
-                              <p key={`increase-${resource}`} className="text-slate-600">{resource}: +{quantity}</p>
+                              <p key={`increase-${resource}`} className="text-[var(--text-2)]">{resource}: +{quantity}</p>
                             ))
-                          ) : <p className="text-slate-400">Not available</p>}
-                          <p className="font-semibold text-rose-700">Decreased</p>
+                          ) : <p className="text-[var(--text-muted)]">Not available</p>}
+                          <p className="font-semibold text-rose-400">Decreased</p>
                           {Object.entries(pattern?.decreased || {}).length > 0 ? (
                             Object.entries(pattern.decreased).map(([resource, quantity]) => (
-                              <p key={`decrease-${resource}`} className="text-slate-600">{resource}: -{quantity}</p>
+                              <p key={`decrease-${resource}`} className="text-[var(--text-2)]">{resource}: -{quantity}</p>
                             ))
-                          ) : <p className="text-slate-400">Not available</p>}
-                          <p className="pt-2 text-slate-600">Concessions: <strong>{displayValue(pattern?.concession_count)}</strong></p>
-                          <p className="text-slate-600">Quantity conceded: <strong>{displayValue(pattern?.total_quantity_conceded)}</strong></p>
-                          <p className="text-slate-600">First concession: <strong>{displayBoolean(pattern?.made_first_concession)}</strong></p>
-                          <p className="text-slate-600">Contributed to agreement: <strong>{displayBoolean(pattern?.contributed_to_final_agreement)}</strong></p>
+                          ) : <p className="text-[var(--text-muted)]">Not available</p>}
+                          <p className="pt-2 text-[var(--text-2)]">Concessions: <strong className="text-[var(--text-1)]">{displayValue(pattern?.concession_count)}</strong></p>
+                          <p className="text-[var(--text-2)]">Quantity conceded: <strong className="text-[var(--text-1)]">{displayValue(pattern?.total_quantity_conceded)}</strong></p>
+                          <p className="text-[var(--text-2)]">First concession: <strong className="text-[var(--text-1)]">{displayBoolean(pattern?.made_first_concession)}</strong></p>
+                          <p className="text-[var(--text-2)]">Contributed to agreement: <strong className="text-[var(--text-1)]">{displayBoolean(pattern?.contributed_to_final_agreement)}</strong></p>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <p className="text-sm text-slate-500">Not available</p>
+                    <p className="text-sm text-[var(--text-muted)]">Not available</p>
                   )}
                 </div>
               </section>
 
               <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-800">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-500 dark:text-emerald-400">
                   Per-Agent Performance
                 </h3>
                 <div className="mt-4 grid gap-4 lg:grid-cols-3">
                   {Object.entries(outcomeAnalysis.agent_performance || {}).length > 0 ? (
                     Object.entries(outcomeAnalysis.agent_performance).map(([agentName, performance]) => (
                       <div key={agentName} className="rounded-xl p-4 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
-                        <p className="text-sm font-bold text-slate-800">{agentName}</p>
+                        <p className="text-sm font-bold text-[var(--text-1)]">{agentName}</p>
                         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                           {[
                             ['Avg satisfaction', performance?.average_satisfaction],
@@ -1318,21 +1331,21 @@ function NegotiationArena() {
                             ['Contribution', displayBoolean(performance?.contribution_to_agreement)],
                           ].map(([label, value]) => (
                             <div key={label} className="rounded-lg p-2 border border-[var(--border-subtle)]" style={{ background: 'var(--bg-surface-2)' }}>
-                              <p className="text-slate-400">{label}</p>
-                              <p className="mt-1 font-semibold text-slate-700">{displayValue(value)}</p>
+                              <p className="text-[var(--text-muted)]">{label}</p>
+                              <p className="mt-1 font-semibold text-[var(--text-1)]">{displayValue(value)}</p>
                             </div>
                           ))}
                         </div>
-                        <div className="mt-4 border-t border-slate-200 pt-3 text-xs">
-                          <p className="font-semibold text-slate-600">Initial proposal</p>
+                        <div className="mt-4 border-t border-[var(--border-subtle)] pt-3 text-xs">
+                          <p className="font-semibold text-[var(--text-2)]">Initial proposal</p>
                           {performance?.initial_proposal ? (
                             <AllocationBreakdown proposal={performance.initial_proposal} style={AGENT_STYLES.default} />
                           ) : (
-                            <p className="mt-1 text-slate-400">Not available</p>
+                            <p className="mt-1 text-[var(--text-muted)]">Not available</p>
                           )}
-                          <p className="mt-3 font-semibold text-slate-600">Final allocation comparison</p>
+                          <p className="mt-3 font-semibold text-[var(--text-2)]">Final allocation comparison</p>
                           {performance?.final_allocation_comparison ? (
-                            <div className="mt-2 space-y-1 text-slate-600">
+                            <div className="mt-2 space-y-1 text-[var(--text-2)]">
                               {Object.entries(performance.final_allocation_comparison.final_paths || {}).map(([path, quantity]) => (
                                 <p key={`final-${path}`}>{path}: {quantity}</p>
                               ))}
@@ -1340,17 +1353,17 @@ function NegotiationArena() {
                                 <p key={`change-${path}`}>Change {path}: {change > 0 ? '+' : ''}{change}</p>
                               ))}
                               {Object.keys(performance.final_allocation_comparison.final_paths || {}).length === 0 && Object.keys(performance.final_allocation_comparison.changes_from_initial || {}).length === 0 && (
-                                <p className="text-slate-400">Not available</p>
+                                <p className="text-[var(--text-muted)]">Not available</p>
                               )}
                             </div>
                           ) : (
-                            <p className="mt-1 text-slate-400">Not available</p>
+                            <p className="mt-1 text-[var(--text-muted)]">Not available</p>
                           )}
                         </div>
                       </div>
                     ))
                   ) : (
-                    <p className="text-sm text-slate-500">Not available</p>
+                    <p className="text-sm text-[var(--text-muted)]">Not available</p>
                   )}
                 </div>
               </section>

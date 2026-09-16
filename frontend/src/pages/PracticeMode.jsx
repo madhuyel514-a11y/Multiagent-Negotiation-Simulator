@@ -32,6 +32,18 @@ const INITIAL_LLM_METRICS = {
   total_latency: 0,
 };
 
+const normalizeLlmMetrics = (metrics) => {
+  if (!metrics) return INITIAL_LLM_METRICS;
+  const input = Number(metrics.total_input_tokens || 0);
+  const output = Number(metrics.total_output_tokens || 0);
+  return {
+    ...metrics,
+    total_input_tokens: input,
+    total_output_tokens: output,
+    total_tokens: input + output,
+  };
+};
+
 const PRACTICE_AGENT_STYLES = {
   government: {
     bg: 'rgba(59, 130, 246, 0.08)',
@@ -360,14 +372,14 @@ function PracticeTranscriptEntry({ msg, index, previousProposal }) {
 
         {/* Deltas: What Changed */}
         {changes.length > 0 && (
-          <div className="border-t border-slate-200/80 px-4 pb-3 pt-3">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          <div className="border-t border-[var(--border-subtle)] px-4 pb-3 pt-3">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               What Changed
             </p>
             <div className="grid gap-1 sm:grid-cols-2">
               {changes.map(({ path, from, to, change }) => (
-                <div key={path} className={`rounded-lg px-2.5 py-1.5 text-xs ${change > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}`}>
-                  <span className="font-medium">{path}</span>
+                <div key={path} className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border ${change > 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-orange-500/15 text-orange-400 border-orange-500/30'}`}>
+                  <span>{path}</span>
                   <span className="ml-2 font-semibold">{from} → {to} {change > 0 ? `↑ +${change}` : `↓ ${change}`}</span>
                 </div>
               ))}
@@ -806,7 +818,7 @@ function PracticeMode() {
         : buildDefaultProposal(configuredScenario);
       setCurrentProposal(startProp);
       setLlmMetrics(
-        data?.state?.gemini_metrics || INITIAL_LLM_METRICS
+        normalizeLlmMetrics(data?.state?.gemini_metrics)
       );
 
       setRound(1);
@@ -886,7 +898,7 @@ function PracticeMode() {
                 setCurrentProposal(state.current_proposal);
               }
               if (state.gemini_metrics) {
-                setLlmMetrics(state.gemini_metrics);
+                setLlmMetrics(normalizeLlmMetrics(state.gemini_metrics));
               }
 
               if (Array.isArray(state.history) && state.history.length > 0) {
@@ -1069,7 +1081,7 @@ function PracticeMode() {
                     setCurrentProposal(aiResp.current_proposal);
                   }
                   if (aiResp?.gemini_metrics) {
-                    setLlmMetrics(aiResp.gemini_metrics);
+                    setLlmMetrics(normalizeLlmMetrics(aiResp.gemini_metrics));
                   }
                   if (event.consensus !== undefined && event.consensus !== null) {
                     setConsensus(Number(event.consensus));
@@ -1211,7 +1223,7 @@ function PracticeMode() {
         }
 
         if (lastMetrics) {
-          setLlmMetrics(lastMetrics);
+          setLlmMetrics(normalizeLlmMetrics(lastMetrics));
         }
 
         if (newMessages.length > 0) {
@@ -1821,11 +1833,11 @@ function PracticeMode() {
               <p className="mt-1 text-sm text-[var(--text-muted)]">
                 Review the conversation, evaluate AI proposals, and make your next negotiation decision.
               </p>
-              <p className="mt-2 text-sm font-semibold text-slate-700">
-                Participants: <span className="text-blue-700 font-bold">Government</span> <span className="text-slate-400">·</span> <span className="text-emerald-700 font-bold">NGO</span> <span className="text-slate-400">·</span> <span className="text-purple-700 font-bold">District Administration</span>
+              <p className="mt-2 text-sm font-semibold text-[var(--text-1)]">
+                Participants: <span className="text-blue-500 font-bold">Government</span> <span className="text-[var(--text-3)]">·</span> <span className="text-emerald-500 font-bold">NGO</span> <span className="text-[var(--text-3)]">·</span> <span className="text-purple-500 font-bold">District Administration</span>
               </p>
               {(status === 'Negotiation complete' || sessionStatus === 'Agreement reached' || sessionStatus === 'Deadlock') && (
-                <p className="mt-2 text-sm font-semibold text-emerald-700">
+                <p className="mt-2 text-sm font-semibold text-emerald-400">
                   ✓ Negotiation complete
                 </p>
               )}
@@ -1917,16 +1929,16 @@ function PracticeMode() {
                 {loading && (
                   <div className="relative pl-8">
                     <div className="absolute left-0 top-5 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm bg-blue-600 animate-ping" />
-                    <div className="rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50/90 via-indigo-50/80 to-blue-50/90 p-4 shadow-xs animate-pulse">
+                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4 shadow-xs animate-pulse">
                       <div className="flex items-center gap-2">
-                        <span className="inline-block h-2 w-2 rounded-full bg-blue-600 animate-ping" />
-                        <p className="text-xs font-extrabold uppercase tracking-wider text-blue-950">
+                        <span className="inline-block h-2 w-2 rounded-full bg-blue-500 animate-ping" />
+                        <p className="text-xs font-extrabold uppercase tracking-wider text-blue-400">
                           {deliberatingAgent
                             ? `${deliberatingAgent} is evaluating & deliberating...`
                             : 'AI agency heads are reviewing your proposal...'}
                         </p>
                       </div>
-                      <p className="mt-1 text-xs text-slate-600 italic">
+                      <p className="mt-1 text-xs text-[var(--text-2)] italic">
                         Evaluating trade-offs, calculating regional needs, and formulating live counter-proposals...
                       </p>
                     </div>
@@ -1948,15 +1960,15 @@ function PracticeMode() {
 
               return (
                 <div className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-xs space-y-4" style={{ background: 'var(--bg-surface)' }}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[var(--border-subtle)] pb-3">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="flex h-2.5 w-2.5 rounded-full bg-blue-600" />
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">
+                        <span className="flex h-2.5 w-2.5 rounded-full bg-blue-500" />
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--text-1)]">
                           Your Proposed Allocation
                         </h3>
                       </div>
-                      <p className="mt-0.5 text-xs text-slate-500">
+                      <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                         Enter the exact resource distribution you propose across all affected regions.
                       </p>
                     </div>
@@ -1966,26 +1978,26 @@ function PracticeMode() {
                         type="button"
                         onClick={handleGetSuggestion}
                         disabled={loading || suggesting || status !== 'Your turn' || !sessionId}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:border-indigo-300 hover:from-indigo-100 hover:to-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-400 shadow-xs transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                         title="Get AI suggested next move and proposal based on regional priorities"
                       >
-                        <Sparkles size={14} className={suggesting ? 'animate-spin text-indigo-600' : 'text-indigo-600'} />
+                        <Sparkles size={14} className={suggesting ? 'animate-spin text-indigo-400' : 'text-indigo-400'} />
                         {suggesting ? 'Drafting...' : '✨ Autofill AI Suggestion'}
                       </button>
                     </div>
                   </div>
 
                   {suggestionReasoning && (
-                    <div className="flex items-start gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/80 p-3.5 text-xs text-indigo-950 shadow-2xs animate-fadeIn">
-                      <Sparkles size={16} className="mt-0.5 shrink-0 text-indigo-600" />
+                    <div className="flex items-start gap-2.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3.5 text-xs text-indigo-300 shadow-2xs animate-fadeIn">
+                      <Sparkles size={16} className="mt-0.5 shrink-0 text-indigo-400" />
                       <div className="flex-1">
-                        <span className="font-bold text-indigo-900">AI Strategic Advisor: </span>
-                        <span className="text-indigo-800">{suggestionReasoning}</span>
+                        <span className="font-bold text-indigo-300">AI Strategic Advisor: </span>
+                        <span className="text-indigo-200">{suggestionReasoning}</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => setSuggestionReasoning(null)}
-                        className="text-indigo-400 transition hover:text-indigo-700 font-semibold"
+                        className="text-indigo-400 transition hover:text-indigo-200 font-semibold"
                         title="Dismiss"
                       >
                         ✕
@@ -2004,7 +2016,7 @@ function PracticeMode() {
                             return (
                               <th key={res} className="px-3 py-3 text-center min-w-[120px]">
                                 <div>{res}</div>
-                                <span className="text-[10px] font-normal text-slate-400 font-mono">
+                                <span className="text-[10px] font-normal text-[var(--text-3)] font-mono">
                                   Budget: {maxAvail}
                                 </span>
                               </th>
@@ -2012,7 +2024,7 @@ function PracticeMode() {
                           })}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                      <tbody className="divide-y divide-[var(--border-subtle)] text-[var(--text-1)]">
                         {Object.entries(activeProposal).map(([district, resources]) => {
                           const regionMeta = scenarioRecipients.find(
                             (r) => (r.name || r) === district
@@ -2021,16 +2033,16 @@ function PracticeMode() {
                           const pop = regionMeta?.population;
 
                           return (
-                            <tr key={district} className="hover:bg-slate-50/40">
+                            <tr key={district} className="hover:bg-[var(--bg-surface-2)]">
                               <td className="px-4 py-3">
-                                <div className="font-semibold text-slate-900">{district}</div>
+                                <div className="font-semibold text-[var(--text-1)]">{district}</div>
                                 <div className="flex items-center gap-1.5 mt-0.5">
-                                  <span className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded ${severity === 'Critical' ? 'bg-red-100 text-red-700' :
-                                      severity === 'High' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
+                                  <span className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded ${severity === 'Critical' ? 'bg-red-500/20 text-red-400' :
+                                      severity === 'High' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'
                                     }`}>
                                     {severity}
                                   </span>
-                                  {pop && <span className="text-[10px] text-slate-400 font-mono">{pop.toLocaleString()} pop</span>}
+                                  {pop && <span className="text-[10px] text-[var(--text-3)] font-mono">{pop.toLocaleString()} pop</span>}
                                 </div>
                               </td>
 
@@ -2058,7 +2070,7 @@ function PracticeMode() {
 
                         {/* TOTAL VALIDATION ROW */}
                         <tr className="font-bold border-t-2 border-[var(--border-subtle)] text-[var(--text-1)]" style={{ background: 'var(--bg-surface-2)' }}>
-                          <td className="px-4 py-3 font-bold text-slate-900">
+                          <td className="px-4 py-3 font-bold text-[var(--text-1)]">
                             TOTAL ALLOCATION
                           </td>
 
@@ -2110,27 +2122,27 @@ function PracticeMode() {
 
             {/* YOUR TURN BANNER */}
             {status === 'Your turn' && !awaitingFinalDecision && (
-              <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/95 via-blue-50/90 to-purple-50/95 p-5 shadow-xs">
+              <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-5 shadow-xs">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2.5">
                     <span className="flex h-3 w-3 relative">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
                     </span>
-                    <span className="text-sm font-extrabold uppercase tracking-wider text-blue-950">
+                    <span className="text-sm font-extrabold uppercase tracking-wider text-indigo-400">
                       {round === 1 ? 'ROUND 1 — INITIAL MASTER PROPOSAL' : `YOUR TURN — ROUND ${round} DECISION`}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-blue-100/90 border border-blue-200/80 px-3 py-1 text-xs font-bold text-blue-800 uppercase tracking-wide">
+                    <span className="rounded-full bg-blue-500/15 border border-blue-500/30 px-3 py-1 text-xs font-bold text-blue-400 uppercase tracking-wide">
                       🟣 4th Negotiator (Human)
                     </span>
-                    <span className="rounded-full bg-purple-100/90 border border-purple-200/80 px-3 py-1 text-xs font-semibold text-purple-800">
+                    <span className="rounded-full bg-purple-500/15 border border-purple-500/30 px-3 py-1 text-xs font-semibold text-purple-400">
                       Round {round} of {totalRounds}
                     </span>
                   </div>
                 </div>
-                <p className="mt-2 text-xs leading-relaxed text-slate-700">
+                <p className="mt-2 text-xs leading-relaxed text-[var(--text-1)]">
                   {round === 1 ? (
                     <>You make the <strong>initial proposal</strong> for the negotiation. Allocate all resources across regions in the matrix below and submit. Government, NGO, and District Administration will each evaluate and respond in order.</>
                   ) : (
@@ -2138,9 +2150,9 @@ function PracticeMode() {
                   )}
                 </p>
 
-                <div className="mt-3.5 pt-3.5 border-t border-indigo-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="text-xs text-slate-600">
-                    <span className="font-bold text-indigo-900">💡 AI Assistant:</span> Unsure how to distribute? Click to auto-generate a balanced strategic allocation tailored to regional crisis severities.
+                <div className="mt-3.5 pt-3.5 border-t border-indigo-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="text-xs text-[var(--text-2)]">
+                    <span className="font-bold text-indigo-400">💡 AI Assistant:</span> Unsure how to distribute? Click to auto-generate a balanced strategic allocation tailored to regional crisis severities.
                   </div>
                   <button
                     type="button"
@@ -2157,34 +2169,34 @@ function PracticeMode() {
 
             {/* FINAL EXECUTIVE DECISION PANEL */}
             {awaitingFinalDecision && (
-              <div className="rounded-2xl border-2 border-indigo-400 bg-gradient-to-br from-indigo-50/95 via-white to-blue-50/90 p-6 shadow-lg space-y-5 animate-fadeIn">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-indigo-100 pb-4">
+              <div className="rounded-2xl border-2 border-indigo-500/40 p-6 shadow-lg space-y-5 animate-fadeIn" style={{ background: 'var(--bg-surface)' }}>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-[var(--border-subtle)] pb-4">
                   <div>
                     <div className="flex items-center gap-2.5">
                       <span className="flex h-3.5 w-3.5 relative">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-indigo-600"></span>
                       </span>
-                      <h3 className="text-base font-extrabold uppercase tracking-wide text-indigo-950">
+                      <h3 className="text-base font-extrabold uppercase tracking-wide text-[var(--text-1)]">
                         Final Executive Decision Required (Round {totalRounds} of {totalRounds} Completed)
                       </h3>
                     </div>
-                    <p className="mt-1 text-xs text-slate-600">
+                    <p className="mt-1 text-xs text-[var(--text-2)]">
                       All {totalRounds} rounds of negotiation have concluded. Government, NGO, and District Administration have presented their final evaluations. As lead coordinator, select the final outcome:
                     </p>
                     {allAiAccepted ? (
-                      <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-emerald-100/90 border border-emerald-300 px-2.5 py-1 text-xs font-bold text-emerald-900">
+                      <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 text-xs font-bold text-emerald-400">
                         <span>✓</span>
                         <span>Unanimous AI Acceptance: All {aiAgents.length} agencies accepted! Authorizing will establish unanimous 4-party agreement.</span>
                       </div>
                     ) : (
-                      <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-100/90 border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-950">
+                      <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 text-xs font-medium text-amber-400">
                         <span>⚠️</span>
                         <span>Only {acceptedAiCount} of {aiAgents.length} agencies accepted (some ended on COUNTER). Full agreement requires all 4 parties to accept; finalizing will record a Deadlock / Impasse.</span>
                       </div>
                     )}
                   </div>
-                  <span className="shrink-0 rounded-full bg-indigo-100 border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-800 uppercase tracking-wider">
+                  <span className="shrink-0 rounded-full bg-indigo-500/15 border border-indigo-500/30 px-3 py-1 text-xs font-bold text-indigo-400 uppercase tracking-wider">
                     Executive Decision
                   </span>
                 </div>
@@ -2197,19 +2209,19 @@ function PracticeMode() {
                     disabled={loading}
                     className={`flex flex-col items-start p-4 rounded-xl border-2 transition shadow-xs text-left group disabled:opacity-50 ${
                       allAiAccepted
-                        ? 'border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 hover:border-emerald-500'
-                        : 'border-amber-300 bg-amber-50/80 hover:bg-amber-100 hover:border-amber-500'
+                        ? 'border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20'
+                        : 'border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20'
                     }`}
                   >
                     <div className={`flex items-center gap-2 mb-1.5 font-extrabold text-sm ${
-                      allAiAccepted ? 'text-emerald-800 group-hover:text-emerald-900' : 'text-amber-900 group-hover:text-amber-950'
+                      allAiAccepted ? 'text-emerald-400' : 'text-amber-400'
                     }`}>
-                      <span className={`p-1 rounded-md ${allAiAccepted ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-200 text-amber-900'}`}>
+                      <span className={`p-1 rounded-md ${allAiAccepted ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
                         <Check size={16} />
                       </span>
                       {allAiAccepted ? 'Accept Agreement (Unanimous 4-Party)' : 'Finalize Deliberation (Deadlock / Impasse)'}
                     </div>
-                    <p className={`text-xs leading-relaxed ${allAiAccepted ? 'text-emerald-700' : 'text-amber-800'}`}>
+                    <p className={`text-xs leading-relaxed ${allAiAccepted ? 'text-emerald-300/80' : 'text-amber-300/80'}`}>
                       {allAiAccepted
                         ? 'Ratify the resource allocation and conclude the negotiation with official multi-agency agreement.'
                         : 'Record final positions; because not all 4 parties accepted, this concludes in an operational deadlock.'}
@@ -2221,13 +2233,13 @@ function PracticeMode() {
                     type="button"
                     onClick={() => handleFinalDecisionAction('reject')}
                     disabled={loading}
-                    className="flex flex-col items-start p-4 rounded-xl border-2 border-rose-300 bg-rose-50/80 hover:bg-rose-100 hover:border-rose-500 transition shadow-xs text-left group disabled:opacity-50"
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 transition shadow-xs text-left group disabled:opacity-50"
                   >
-                    <div className="flex items-center gap-2 mb-1.5 text-rose-800 font-extrabold text-sm group-hover:text-rose-900">
-                      <span className="p-1 rounded-md bg-rose-200 text-rose-900"><X size={16} /></span>
+                    <div className="flex items-center gap-2 mb-1.5 text-rose-400 font-extrabold text-sm">
+                      <span className="p-1 rounded-md bg-rose-500/20 text-rose-300"><X size={16} /></span>
                       Reject & Walk Away
                     </div>
-                    <p className="text-xs text-rose-700 leading-relaxed">
+                    <p className="text-xs text-rose-300/80 leading-relaxed">
                       Reject the final allocation and record a negotiation breakdown / deadlock.
                     </p>
                   </button>
@@ -2237,13 +2249,13 @@ function PracticeMode() {
                     type="button"
                     onClick={() => handleFinalDecisionAction('reset')}
                     disabled={loading}
-                    className="flex flex-col items-start p-4 rounded-xl border-2 border-slate-300 bg-slate-50/90 hover:bg-slate-100 hover:border-slate-500 transition shadow-xs text-left group disabled:opacity-50"
+                    className="flex flex-col items-start p-4 rounded-xl border-2 border-[var(--border)] bg-[var(--bg-surface-2)] hover:border-[var(--accent)] transition shadow-xs text-left group disabled:opacity-50"
                   >
-                    <div className="flex items-center gap-2 mb-1.5 text-slate-800 font-extrabold text-sm group-hover:text-slate-900">
-                      <span className="p-1 rounded-md bg-slate-200 text-slate-900"><RotateCcw size={16} /></span>
+                    <div className="flex items-center gap-2 mb-1.5 text-[var(--text-1)] font-extrabold text-sm">
+                      <span className="p-1 rounded-md bg-[var(--bg-surface)] text-[var(--text-1)]"><RotateCcw size={16} /></span>
                       Reset Negotiation
                     </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
+                    <p className="text-xs text-[var(--text-muted)] leading-relaxed">
                       Reset round counter and start a fresh practice negotiation from Round 1.
                     </p>
                   </button>
@@ -2390,24 +2402,24 @@ function PracticeMode() {
                     <div className="flex items-center gap-2.5">
                       <span className="text-xl">{isAgreed ? '🤝' : isDeadlock ? '⚠️' : '📋'}</span>
                       <div>
-                        <h3 className="text-base font-bold text-slate-900">
+                        <h3 className="text-base font-bold text-[var(--text-1)]">
                           {isAgreed
                             ? 'Final Resource Allocation Agreement'
                             : isDeadlock
                             ? 'Deliberation Concluded — Impasse / Deadlock'
                             : `Round ${round} Deliberation Review`}
                         </h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-[var(--text-muted)]">
                           Multi-agent consensus status across all 4 participants
                         </p>
                       </div>
                     </div>
                     <span className={`rounded-full px-3 py-1 text-xs font-extrabold uppercase border ${
                       isAgreed
-                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                         : isDeadlock
-                        ? 'bg-rose-100 text-rose-800 border-rose-300'
-                        : 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                        ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                        : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
                     }`}>
                       {isAgreed ? 'Agreement Reached' : isDeadlock ? 'Deadlock' : sessionStatus}
                     </span>
@@ -2416,19 +2428,19 @@ function PracticeMode() {
                   {/* Real Dynamic Consensus checklist */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
                     <div className={`rounded-xl border p-3 text-center transition ${govStatus.bg}`}>
-                      <p className="text-xs font-bold text-slate-800">Government</p>
+                      <p className="text-xs font-bold text-[var(--text-1)]">Government</p>
                       <p className={`text-sm font-extrabold mt-1 ${govStatus.color}`}>{govStatus.label}</p>
                     </div>
                     <div className={`rounded-xl border p-3 text-center transition ${ngoStatus.bg}`}>
-                      <p className="text-xs font-bold text-slate-800">NGO</p>
+                      <p className="text-xs font-bold text-[var(--text-1)]">NGO</p>
                       <p className={`text-sm font-extrabold mt-1 ${ngoStatus.color}`}>{ngoStatus.label}</p>
                     </div>
                     <div className={`rounded-xl border p-3 text-center transition ${distStatus.bg}`}>
-                      <p className="text-xs font-bold text-slate-800">District Admin</p>
+                      <p className="text-xs font-bold text-[var(--text-1)]">District Admin</p>
                       <p className={`text-sm font-extrabold mt-1 ${distStatus.color}`}>{distStatus.label}</p>
                     </div>
                     <div className={`rounded-xl border p-3 text-center transition ${humanStatus.bg}`}>
-                      <p className="text-xs font-bold text-slate-800">Human (You)</p>
+                      <p className="text-xs font-bold text-[var(--text-1)]">Human (You)</p>
                       <p className={`text-sm font-extrabold mt-1 ${humanStatus.color}`}>{humanStatus.label}</p>
                     </div>
                   </div>
@@ -2548,12 +2560,12 @@ function PracticeMode() {
               <div className="rounded-2xl border border-[var(--border-subtle)] p-4" style={{ background: 'var(--bg-surface-2)' }}>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-indigo-600" />
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    <span className="h-2 w-2 rounded-full bg-indigo-500" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-1)]">
                       Current AI Proposals (Positions to Evaluate)
                     </h4>
                   </div>
-                  <span className="text-[11px] text-slate-500">
+                  <span className="text-[11px] text-[var(--text-muted)]">
                     Click &ldquo;Copy to My Allocation&rdquo; to start from any agent&rsquo;s proposal
                   </span>
                 </div>
@@ -2583,9 +2595,9 @@ function PracticeMode() {
 
                           <div className="space-y-1.5 my-2">
                             {Object.entries(aiProp.proposal || {}).map(([dist, alloc]) => (
-                              <div key={dist} className="rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600 flex items-center justify-between">
-                                <span className="font-medium text-slate-700 truncate max-w-[90px]">{dist}:</span>
-                                <span className="font-mono text-[10px] text-slate-500">
+                              <div key={dist} className="rounded-lg border border-[var(--border-subtle)] px-2 py-1 text-[11px] flex items-center justify-between" style={{ background: 'var(--bg-surface-2)' }}>
+                                <span className="font-medium text-[var(--text-1)] truncate max-w-[90px]">{dist}:</span>
+                                <span className="font-mono text-[10px] text-[var(--text-2)]">
                                   {resourceNames.map((r) => `${alloc?.[r] ?? 0} ${r.split(' ')[0]}`).join(' / ')}
                                 </span>
                               </div>
@@ -2599,7 +2611,8 @@ function PracticeMode() {
                             setCurrentProposal(JSON.parse(JSON.stringify(aiProp.proposal)));
                             setAction('Counter Offer');
                           }}
-                          className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 hover:border-slate-300 transition text-center"
+                          className="mt-2 w-full rounded-lg border border-[var(--border-subtle)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-1)] hover:bg-[var(--bg-surface-2)] transition text-center"
+                          style={{ background: 'var(--bg-surface-2)' }}
                         >
                           📋 Copy to My Allocation
                         </button>
@@ -2668,13 +2681,13 @@ function PracticeMode() {
           </section>
 
           <section className="rounded-2xl border border-[var(--border-subtle)] p-5 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
-            <h3 className="text-base font-semibold text-slate-800">LLM Metrics</h3>
+            <h3 className="text-base font-semibold text-[var(--text-1)]">LLM Metrics</h3>
             <div className="mt-4 space-y-2">
               {[
                 ['API Requests', llmMetrics.total_requests],
                 ['Input Tokens', llmMetrics.total_input_tokens],
                 ['Output Tokens', llmMetrics.total_output_tokens],
-                ['Total Tokens', llmMetrics.total_tokens],
+                ['Total Tokens', (Number(llmMetrics.total_input_tokens || 0) + Number(llmMetrics.total_output_tokens || 0))],
                 ['Average Latency', `${Number(llmMetrics.average_latency || 0).toFixed(2)}s`],
                 ['Total API Latency', `${Number(llmMetrics.total_latency || 0).toFixed(2)}s`],
               ].map(([label, value]) => (
@@ -2848,7 +2861,7 @@ function PracticeMode() {
                             isNestedAllocation(demands) ? (
                               Object.entries(demands).map(([sec, val]) => (
                                 <div key={sec} className="w-full">
-                                  <p className="text-xs font-bold text-slate-700 mb-1">{sec}</p>
+                                  <p className="text-xs font-bold text-[var(--text-1)] mb-1">{sec}</p>
                                   <div className="flex flex-wrap gap-1.5">
                                     {Object.entries(val || {}).map(([resource, amount]) => (
                                       <span
@@ -2883,7 +2896,7 @@ function PracticeMode() {
 
               {/* Final Agreed Allocation */}
               <div>
-                <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-4">
+                <h3 className="text-xs font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-4">
                   {consensusReached ? 'Final Agreed Allocation' : 'Latest Proposal (No Agreement Reached)'}
                 </h3>
                 <div className="bg-[#009A65] text-white rounded-2xl p-6 shadow-md min-h-[160px]">
@@ -3092,8 +3105,8 @@ function PracticeMode() {
                                     isPos
                                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                       : isNeg
-                                      ? 'bg-amber-100 text-amber-800'
-                                      : 'bg-slate-100 text-slate-600'
+                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                      : 'bg-slate-500/20 text-slate-300 border border-slate-500/30'
                                   }`}
                                 >
                                   {isPos && <TrendingUp size={12} />}
@@ -3106,10 +3119,10 @@ function PracticeMode() {
                                 <span
                                   className={`font-semibold ${
                                     isPos
-                                      ? 'text-emerald-700'
+                                      ? 'text-emerald-400'
                                       : isNeg
-                                      ? 'text-amber-700'
-                                      : 'text-slate-500'
+                                      ? 'text-amber-400'
+                                      : 'text-[var(--text-muted)]'
                                   }`}
                                 >
                                   {isPos ? 'Increased Allocation' : isNeg ? 'Concession / Shifted' : 'Maintained'}
