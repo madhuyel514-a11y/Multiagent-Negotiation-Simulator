@@ -11,6 +11,7 @@ backend_dir = os.path.dirname(os.path.abspath(__file__))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
+import asyncio
 from services.negotiation_orchestrator import NegotiationOrchestrator
 
 def test_practice_roundtable():
@@ -44,7 +45,7 @@ def test_practice_roundtable():
         "resourceQuantities": scenario["resourceQuantities"]
     }
 
-    session_id = orchestrator.create_session(scenario, agents_config, config)
+    session_id = asyncio.run(orchestrator.create_session(scenario, agents_config, config))
     print(f"[TEST] Session created: {session_id}")
 
     # Human tables an opening master proposal

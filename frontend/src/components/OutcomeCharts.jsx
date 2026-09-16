@@ -13,38 +13,53 @@ import {
 const AGENT_COLORS = {
   government: {
     stroke: '#3b82f6',
-    fill: 'rgba(59, 130, 246, 0.15)',
+    fill: 'rgba(59, 130, 246, 0.12)',
     border: 'rgba(59, 130, 246, 0.3)',
     text: 'text-blue-500',
     name: 'Government Agent',
+    dashArray: 'none',
+    shape: 'circle',
+    symbol: '●',
   },
   ngo: {
     stroke: '#10b981',
-    fill: 'rgba(16, 185, 129, 0.15)',
+    fill: 'rgba(16, 185, 129, 0.12)',
     border: 'rgba(16, 185, 129, 0.3)',
     text: 'text-emerald-500',
     name: 'NGO Agent',
+    dashArray: '6 3.5',
+    shape: 'circle',
+    symbol: '●',
   },
   district: {
     stroke: '#a855f7',
-    fill: 'rgba(168, 85, 247, 0.15)',
+    fill: 'rgba(168, 85, 247, 0.12)',
     border: 'rgba(168, 85, 247, 0.3)',
     text: 'text-purple-500',
     name: 'District Admin Agent',
+    dashArray: '2 3',
+    shape: 'circle',
+    symbol: '●',
   },
   human: {
     stroke: '#6366f1',
-    fill: 'rgba(99, 102, 241, 0.15)',
+    fill: 'rgba(99, 102, 241, 0.12)',
     border: 'rgba(99, 102, 241, 0.3)',
     text: 'text-indigo-500',
     name: 'Human Participant',
+    dashArray: '8 4',
+    shape: 'circle',
+    symbol: '●',
   },
   default: {
     stroke: '#f97316',
-    fill: 'rgba(249, 115, 22, 0.15)',
+    fill: 'rgba(249, 115, 22, 0.12)',
     border: 'rgba(249, 115, 22, 0.3)',
     text: 'text-orange-500',
     name: 'Stakeholder',
+    dashArray: 'none',
+    shape: 'circle',
+    symbol: '●',
   },
 };
 
@@ -55,6 +70,39 @@ function getAgentColor(name = '') {
   if (n.includes('district')) return AGENT_COLORS.district;
   if (n.includes('human') || n.includes('you')) return AGENT_COLORS.human;
   return AGENT_COLORS.default;
+}
+
+function renderMarkerShape({ cx, cy, color, isHovered, isSpeaker, markerKey, onMouseEnter, onMouseLeave }) {
+  const size = isHovered ? 6.5 : isSpeaker ? 4.8 : 3.8;
+
+  return (
+    <g
+      key={markerKey}
+      className="cursor-pointer transition-transform duration-150"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      {isSpeaker && (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={isHovered ? 11 : 8}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          opacity="0.35"
+        />
+      )}
+      <circle
+        cx={cx}
+        cy={cy}
+        r={size}
+        fill={isSpeaker ? color : 'var(--bg-surface)'}
+        stroke={color}
+        strokeWidth={isHovered ? 2.5 : 2}
+      />
+    </g>
+  );
 }
 
 function flattenAllocation(proposal) {
@@ -131,6 +179,8 @@ function SingleResourceTrajectoryChart({
   availableDistricts = [],
 }) {
   const [districtScope, setDistrictScope] = useState('all');
+  const [scaleMode, setScaleMode] = useState('auto'); // 'auto' (Detailed Variations) | 'full' (0 - Quota)
+  const [hiddenAgents, setHiddenAgents] = useState({});
   const [hoveredPoint, setHoveredPoint] = useState(null);
 
   const agentList = useMemo(() => {
@@ -139,9 +189,34 @@ function SingleResourceTrajectoryChart({
     return found.length > 0 ? found : ['Government Agent', 'NGO Agent', 'District Administration Agent'];
   }, [participants, history]);
 
-  // Build communication timeline data from turn 1 to N
+  const visibleAgents = useMemo(() => {
+    return agentList.filter((a) => !hiddenAgents[a]);
+  }, [agentList, hiddenAgents]);
+
+  const toggleAgent = (agent) => {
+    setHiddenAgents((prev) => ({
+      ...prev,
+      [agent]: !prev[agent],
+    }));
+  };
+
+  const soloAgent = (agent) => {
+    const next = {};
+    agentList.forEach((a) => {
+      if (a !== agent) next[a] = true;
+    });
+    setHiddenAgents(next);
+  };
+
+  const showAllAgents = () => {
+    setHiddenAgents({});
+  };
+
+  // Build communication timeline data from turn 1 to N with smart adaptive Y-bounds
   const timelineData = useMemo(() => {
-    if (!history || history.length === 0) return { turns: [], globalMax: capacity || 100, globalMin: 0 };
+    if (!history || history.length === 0) {
+      return { turns: [], minY: 0, maxY: capacity || 100, dataMin: 0, dataMax: 0 };
+    }
 
     const latestProposals = {};
     let lastActiveProposal = {};
@@ -157,8 +232,8 @@ function SingleResourceTrajectoryChart({
     }
 
     const turns = [];
-    let globalMax = capacity > 0 ? capacity : 10;
-    let globalMin = 0;
+    let rawMin = Infinity;
+    let rawMax = -Infinity;
 
     history.forEach((entry, idx) => {
       const turnNum = idx + 1;
@@ -183,7 +258,10 @@ function SingleResourceTrajectoryChart({
         const breakdown = extractDistrictBreakdown(prop, resourceName);
         agentValues[agent] = val;
         agentBreakdowns[agent] = breakdown;
-        if (val > globalMax) globalMax = val;
+        if (!hiddenAgents[agent]) {
+          if (val < rawMin) rawMin = val;
+          if (val > rawMax) rawMax = val;
+        }
       });
 
       turns.push({
@@ -197,16 +275,38 @@ function SingleResourceTrajectoryChart({
       });
     });
 
-    return { turns, globalMax: Math.ceil(globalMax * 1.1), globalMin };
-  }, [history, agentList, resourceName, districtScope, capacity]);
+    if (rawMin === Infinity) rawMin = 0;
+    if (rawMax === -Infinity) rawMax = 10;
 
-  const { turns, globalMax } = timelineData;
+    let minY = 0;
+    let maxY = capacity > 0 ? capacity : 10;
+
+    if (scaleMode === 'auto') {
+      const span = rawMax - rawMin;
+      if (span === 0) {
+        minY = Math.max(0, Math.floor(rawMin * 0.75));
+        maxY = Math.ceil(rawMax * 1.25 || 10);
+      } else {
+        const pad = Math.max(2, Math.ceil(span * 0.25));
+        minY = Math.max(0, Math.floor((rawMin - pad) / 5) * 5);
+        maxY = Math.ceil((rawMax + pad) / 5) * 5;
+      }
+      if (minY === maxY) maxY = minY + 10;
+    } else {
+      minY = 0;
+      maxY = Math.ceil(Math.max(capacity, rawMax) * 1.1) || 10;
+    }
+
+    return { turns, minY, maxY, dataMin: rawMin, dataMax: rawMax };
+  }, [history, agentList, resourceName, districtScope, capacity, scaleMode, hiddenAgents]);
+
+  const { turns, minY, maxY, dataMin, dataMax } = timelineData;
   const totalTurns = Math.max(1, turns.length);
 
   const width = 760;
   const height = 280;
   const padLeft = 55;
-  const padRight = 35;
+  const padRight = 45;
   const padTop = 35;
   const padBottom = 45;
 
@@ -219,65 +319,104 @@ function SingleResourceTrajectoryChart({
   };
 
   const getY = (val) => {
-    if (globalMax === 0) return padTop + chartH;
-    return padTop + chartH - (val / globalMax) * chartH;
+    const range = Math.max(1, maxY - minY);
+    const clamped = Math.max(minY, Math.min(maxY, val));
+    return padTop + chartH - ((clamped - minY) / range) * chartH;
   };
 
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((pct) => ({
-    val: Math.round(globalMax * pct),
-    y: padTop + chartH - pct * chartH,
-  }));
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((pct) => {
+    const val = Math.round(minY + (maxY - minY) * pct);
+    return {
+      val,
+      y: padTop + chartH - pct * chartH,
+    };
+  });
 
-  const capacityY = capacity > 0 && capacity <= globalMax ? getY(capacity) : null;
+  const capacityY = capacity > 0 && capacity >= minY && capacity <= maxY ? getY(capacity) : null;
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-[var(--border)] p-4 shadow-sm" style={{ background: 'var(--bg-surface)' }}>
-      {/* Header with Title and District Scope */}
+    <div className="flex flex-col gap-3 rounded-2xl border border-[var(--border)] p-4 shadow-sm transition-all" style={{ background: 'var(--bg-surface)' }}>
+      {/* Header with Title, District Scope & Scale Mode Toggle */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-500/15 text-amber-500 font-bold text-xs">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500 font-bold text-xs shadow-xs">
             {resourceName.charAt(0)}
           </span>
-          <h4 className="text-sm font-bold text-[var(--text-1)]">
-            {resourceName}
-          </h4>
-          {capacity > 0 && (
-            <span className="badge rounded-full px-2.5 py-0.5 text-[10px] font-semibold bg-[var(--bg-surface-2)] text-[var(--text-2)] border border-[var(--border-subtle)]">
-              Quota Limit: {capacity} units
-            </span>
-          )}
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h4 className="text-sm font-bold text-[var(--text-1)]">
+                {resourceName}
+              </h4>
+              <span className="badge rounded-full px-2.5 py-0.5 text-[10px] font-semibold bg-[var(--bg-surface-2)] text-[var(--text-2)] border border-[var(--border-subtle)]">
+                {districtScope === 'all'
+                  ? `Total Quota: ${capacity} units`
+                  : `${districtScope.replace(' District', '')} View · Total Quota: ${capacity}`}
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* District scope selector pills if nested */}
-        {availableDistricts.length > 0 && (
-          <div className="flex items-center gap-1 rounded-xl p-1 border border-[var(--border-subtle)] text-[11px]" style={{ background: 'var(--bg-surface-2)' }}>
+        {/* Right Header Controls: Scale Toggle & District Filter */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Zoom / Auto-Scale Toggle */}
+          <div className="flex items-center rounded-xl p-1 border border-[var(--border-subtle)] text-[11px]" style={{ background: 'var(--bg-surface-2)' }}>
             <button
               type="button"
-              onClick={() => setDistrictScope('all')}
-              className={`rounded-lg px-2.5 py-1 font-semibold transition-all ${
-                districtScope === 'all'
+              onClick={() => setScaleMode('auto')}
+              title="Zoom Y-axis to highlight precise quantity changes"
+              className={`rounded-lg px-2.5 py-1 font-semibold transition-all flex items-center gap-1 ${
+                scaleMode === 'auto'
                   ? 'bg-[var(--accent)] text-white shadow-xs font-bold'
                   : 'text-[var(--text-3)] hover:text-[var(--text-1)]'
               }`}
             >
-              Total (All Districts)
+              <span>🔍 Detail Zoom ({minY}–{maxY})</span>
             </button>
-            {availableDistricts.map((dist) => (
+            <button
+              type="button"
+              onClick={() => setScaleMode('full')}
+              title="Show full 0 to Max Capacity scale"
+              className={`rounded-lg px-2.5 py-1 font-semibold transition-all flex items-center gap-1 ${
+                scaleMode === 'full'
+                  ? 'bg-[var(--accent)] text-white shadow-xs font-bold'
+                  : 'text-[var(--text-3)] hover:text-[var(--text-1)]'
+              }`}
+            >
+              <span>📏 Full Scale (0–{capacity || maxY})</span>
+            </button>
+          </div>
+
+          {/* District scope selector pills if nested */}
+          {availableDistricts.length > 0 && (
+            <div className="flex items-center gap-1 rounded-xl p-1 border border-[var(--border-subtle)] text-[11px]" style={{ background: 'var(--bg-surface-2)' }}>
               <button
-                key={dist}
                 type="button"
-                onClick={() => setDistrictScope(dist)}
+                onClick={() => setDistrictScope('all')}
                 className={`rounded-lg px-2.5 py-1 font-semibold transition-all ${
-                  districtScope === dist
-                    ? 'bg-[var(--accent)] text-white shadow-xs font-bold'
+                  districtScope === 'all'
+                    ? 'bg-amber-500 text-white shadow-xs font-bold'
                     : 'text-[var(--text-3)] hover:text-[var(--text-1)]'
                 }`}
               >
-                {dist.replace(' District', '')}
+                Total (All Districts)
               </button>
-            ))}
-          </div>
-        )}
+              {availableDistricts.map((dist) => (
+                <button
+                  key={dist}
+                  type="button"
+                  onClick={() => setDistrictScope(dist)}
+                  className={`rounded-lg px-2.5 py-1 font-semibold transition-all ${
+                    districtScope === dist
+                      ? 'bg-amber-500 text-white shadow-xs font-bold'
+                      : 'text-[var(--text-3)] hover:text-[var(--text-1)]'
+                  }`}
+                >
+                  {dist.replace(' District', '')}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* SVG Chart Canvas */}
@@ -314,12 +453,26 @@ function SingleResourceTrajectoryChart({
                 fill="var(--text-3)"
                 fontSize="10"
                 textAnchor="end"
-                className="font-mono"
+                className="font-mono font-medium"
               >
                 {val}
               </text>
             </g>
           ))}
+
+          {/* Vertical turn hover guide */}
+          {hoveredPoint && (
+            <line
+              x1={getX(hoveredPoint.turn)}
+              y1={padTop}
+              x2={getX(hoveredPoint.turn)}
+              y2={padTop + chartH}
+              stroke="var(--accent)"
+              strokeDasharray="3 3"
+              strokeWidth="1.5"
+              opacity="0.7"
+            />
+          )}
 
           {/* Capacity Reference Benchmark Line */}
           {capacityY !== null && (
@@ -350,6 +503,7 @@ function SingleResourceTrajectoryChart({
           {/* X Axis Communication Turn Labels */}
           {turns.map((t, idx) => {
             const x = getX(t.turn);
+            const isHoveredTurn = hoveredPoint?.turn === t.turn;
             return (
               <g key={idx}>
                 <line
@@ -357,25 +511,26 @@ function SingleResourceTrajectoryChart({
                   y1={padTop + chartH}
                   x2={x}
                   y2={padTop + chartH + 5}
-                  stroke="var(--border)"
-                  strokeWidth="1"
+                  stroke={isHoveredTurn ? 'var(--accent)' : 'var(--border)'}
+                  strokeWidth={isHoveredTurn ? '2' : '1'}
                 />
                 <text
                   x={x}
                   y={padTop + chartH + 18}
-                  fill={hoveredPoint?.turn === t.turn ? 'var(--accent)' : 'var(--text-3)'}
+                  fill={isHoveredTurn ? 'var(--accent)' : 'var(--text-3)'}
                   fontSize="9"
                   textAnchor="middle"
-                  className="font-mono"
+                  className={`font-mono ${isHoveredTurn ? 'font-bold' : ''}`}
                 >
                   T{t.turn}
                 </text>
                 <text
                   x={x}
                   y={padTop + chartH + 28}
-                  fill="var(--text-4)"
+                  fill={isHoveredTurn ? 'var(--text-1)' : 'var(--text-4)'}
                   fontSize="8"
                   textAnchor="middle"
+                  className={isHoveredTurn ? 'font-semibold' : ''}
                 >
                   {t.agent.split(' ')[0]}
                 </text>
@@ -383,8 +538,8 @@ function SingleResourceTrajectoryChart({
             );
           })}
 
-          {/* Agent Lines & Dots */}
-          {agentList.map((agent) => {
+          {/* Agent Lines & Area Fills */}
+          {visibleAgents.map((agent) => {
             const color = getAgentColor(agent);
             const gradId = `resgrad-${resourceName.replace(/[^a-zA-Z0-9]/g, '')}-${agent.replace(/[^a-zA-Z0-9]/g, '')}`;
 
@@ -396,6 +551,7 @@ function SingleResourceTrajectoryChart({
               speakingAgent: t.agent,
               action: t.action,
               isSpeaker: t.agent === agent,
+              allAgentValues: t.agentValues,
             }));
 
             if (points.length === 0) return null;
@@ -414,92 +570,138 @@ function SingleResourceTrajectoryChart({
                   fill="none"
                   stroke={color.stroke}
                   strokeWidth="2.5"
+                  strokeDasharray={color.dashArray}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
 
-                {/* Point dots */}
+                {/* Point Shape Markers */}
                 {points.map((p, pIdx) => {
                   const cx = getX(p.turn);
                   const cy = getY(p.val);
                   const isHovered =
                     hoveredPoint?.agent === agent && hoveredPoint?.turn === p.turn;
 
+                  return renderMarkerShape({
+                    shape: color.shape,
+                    cx,
+                    cy,
+                    color: color.stroke,
+                    isHovered,
+                    isSpeaker: p.isSpeaker,
+                    markerKey: `${agent}-${pIdx}`,
+                    onMouseEnter: () =>
+                      setHoveredPoint({
+                        agent,
+                        turn: p.turn,
+                        round: p.round,
+                        val: p.val,
+                        breakdown: p.breakdown,
+                        speakingAgent: p.speakingAgent,
+                        action: p.action,
+                        allAgentValues: p.allAgentValues,
+                        x: cx,
+                        y: cy,
+                        color: color.stroke,
+                        symbol: color.symbol,
+                      }),
+                    onMouseLeave: () => setHoveredPoint(null),
+                  });
+                })}
+
+                {/* Latest Endpoint Value Badge */}
+                {points.length > 0 && (() => {
+                  const lastP = points[points.length - 1];
+                  const lx = getX(lastP.turn);
+                  const ly = getY(lastP.val);
                   return (
-                    <g key={pIdx} className="cursor-pointer">
-                      {p.isSpeaker && (
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={isHovered ? 8 : 6}
-                          fill="none"
-                          stroke={color.stroke}
-                          strokeWidth="1.5"
-                          opacity="0.4"
-                        />
-                      )}
-                      <circle
-                        cx={cx}
-                        cy={cy}
-                        r={isHovered ? 5.5 : p.isSpeaker ? 4 : 3}
-                        fill={p.isSpeaker ? color.stroke : 'var(--bg-surface)'}
-                        stroke={color.stroke}
-                        strokeWidth="2"
-                        className="transition-all duration-150"
-                        onMouseEnter={() =>
-                          setHoveredPoint({
-                            agent,
-                            turn: p.turn,
-                            round: p.round,
-                            val: p.val,
-                            breakdown: p.breakdown,
-                            speakingAgent: p.speakingAgent,
-                            action: p.action,
-                            x: cx,
-                            y: cy,
-                            color: color.stroke,
-                          })
-                        }
-                        onMouseLeave={() => setHoveredPoint(null)}
+                    <g key={`end-${agent}`}>
+                      <rect
+                        x={lx + 6}
+                        y={ly - 8}
+                        width="26"
+                        height="16"
+                        rx="4"
+                        fill={color.stroke}
+                        opacity="0.9"
                       />
+                      <text
+                        x={lx + 19}
+                        y={ly + 4}
+                        fill="#ffffff"
+                        fontSize="9"
+                        fontWeight="bold"
+                        textAnchor="middle"
+                        className="font-mono"
+                      >
+                        {lastP.val}
+                      </text>
                     </g>
                   );
-                })}
+                })()}
               </g>
             );
           })}
         </svg>
 
-        {/* Hover Tooltip */}
+        {/* Hover Tooltip (Detailed multi-agent breakdown) */}
         {hoveredPoint && (
           <div
-            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-xl px-3 py-2 shadow-xl border text-xs animate-scale-in"
+            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-xl p-3 shadow-xl border text-xs animate-scale-in min-w-[200px]"
             style={{
-              left: `${Math.max(12, Math.min(88, (hoveredPoint.x / width) * 100))}%`,
-              top: `${Math.max(5, (hoveredPoint.y / height) * 100)}%`,
+              left: `${Math.max(15, Math.min(85, (hoveredPoint.x / width) * 100))}%`,
+              top: `${Math.max(6, (hoveredPoint.y / height) * 100)}%`,
               background: 'var(--bg-surface)',
               borderColor: hoveredPoint.color,
             }}
           >
-            <div className="flex items-center gap-1.5 font-bold text-[var(--text-1)]">
-              <span className="h-2 w-2 rounded-full" style={{ background: hoveredPoint.color }} />
-              {hoveredPoint.agent}
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-1.5 mb-1.5">
+              <div className="flex items-center gap-1.5 font-bold text-[var(--text-1)]">
+                <span className="font-mono">{hoveredPoint.symbol}</span>
+                <span>Turn {hoveredPoint.turn}</span>
+              </div>
+              <span className="badge rounded px-1.5 py-0.5 text-[9px] font-bold bg-[var(--accent-bg)] text-[var(--accent)] border border-[var(--accent-border)]">
+                {hoveredPoint.action}
+              </span>
             </div>
-            <p className="mt-0.5 text-[10px] text-[var(--text-3)]">
-              Turn {hoveredPoint.turn} (Round {hoveredPoint.round}) ·{' '}
-              <span className="font-semibold text-[var(--accent)]">{hoveredPoint.action}</span>
-            </p>
-            <p className="mt-1 font-mono font-bold text-[var(--text-1)]">
-              {resourceName}: {hoveredPoint.val} units
+
+            <p className="text-[10px] text-[var(--text-3)] mb-1">
+              Active speaker: <strong className="text-[var(--text-1)]">{hoveredPoint.speakingAgent}</strong>
             </p>
 
-            {/* Breakdown per district */}
+            {/* Comparison of all agents' proposed numbers at this turn */}
+            <div className="space-y-1 my-1 text-[11px]">
+              {agentList.map((a) => {
+                const ac = getAgentColor(a);
+                const aVal = hoveredPoint.allAgentValues?.[a] ?? 0;
+                const isCurrent = hoveredPoint.agent === a;
+                return (
+                  <div
+                    key={a}
+                    className={`flex items-center justify-between px-1.5 py-0.5 rounded ${
+                      isCurrent ? 'bg-[var(--bg-surface-2)] font-bold' : 'text-[var(--text-2)]'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span style={{ color: ac.stroke }}>{ac.symbol}</span>
+                      <span className="truncate max-w-[110px]">{a}:</span>
+                    </span>
+                    <span className="font-mono font-bold" style={{ color: ac.stroke }}>
+                      {aVal} units
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* District Breakdown if available */}
             {Object.keys(hoveredPoint.breakdown).length > 0 && (
-              <div className="mt-1.5 border-t border-[var(--border-subtle)] pt-1 space-y-0.5 text-[10px] text-[var(--text-2)]">
+              <div className="mt-1.5 border-t border-[var(--border-subtle)] pt-1 space-y-0.5 text-[10px] text-[var(--text-3)]">
+                <p className="font-semibold text-[var(--text-2)]">Sector Breakdown:</p>
                 {Object.entries(hoveredPoint.breakdown).map(([dist, val]) => (
                   <div key={dist} className="flex justify-between gap-2">
                     <span className="truncate">{dist.replace(' District', '')}:</span>
-                    <span className="font-mono font-bold">{val}</span>
+                    <span className="font-mono font-bold text-[var(--text-1)]">{val}</span>
                   </div>
                 ))}
               </div>
@@ -508,24 +710,50 @@ function SingleResourceTrajectoryChart({
         )}
       </div>
 
-      {/* Legend with Current Demands */}
-      <div className="flex items-center justify-between flex-wrap gap-2 text-xs pt-1">
-        <div className="flex items-center gap-4 flex-wrap">
+      {/* Interactive Legend with Toggles & Solo Filters */}
+      <div className="flex items-center justify-between flex-wrap gap-2 text-xs pt-1 border-t border-[var(--border-subtle)]">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] font-semibold text-[var(--text-3)]">Agents:</span>
           {agentList.map((agent) => {
             const color = getAgentColor(agent);
+            const isHidden = hiddenAgents[agent];
             const lastTurn = turns[turns.length - 1];
             const currentVal = lastTurn?.agentValues[agent] ?? 0;
+
             return (
-              <div key={agent} className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: color.stroke }} />
-                <span className="text-[var(--text-2)] font-medium">{agent}:</span>
-                <strong className="font-mono text-[var(--text-1)]">{currentVal} units</strong>
+              <div
+                key={agent}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 border transition-all cursor-pointer select-none ${
+                  isHidden
+                    ? 'opacity-40 border-[var(--border-subtle)] bg-[var(--bg-surface-2)] line-through'
+                    : 'border-[var(--border)] bg-[var(--bg-surface-2)] hover:border-[var(--accent)]'
+                }`}
+                onClick={() => toggleAgent(agent)}
+                title={`Click to ${isHidden ? 'show' : 'hide'} ${agent}`}
+              >
+                <span className="font-mono font-bold text-sm" style={{ color: color.stroke }}>
+                  {color.symbol}
+                </span>
+                <span className="text-[var(--text-2)] font-medium text-[11px]">{agent}:</span>
+                <strong className="font-mono text-[var(--text-1)] text-[11px]">{currentVal}</strong>
               </div>
             );
           })}
+
+          {/* Show All Reset if any agent is hidden */}
+          {Object.values(hiddenAgents).some(Boolean) && (
+            <button
+              type="button"
+              onClick={showAllAgents}
+              className="text-[10px] text-[var(--accent)] font-semibold underline ml-1 hover:opacity-80"
+            >
+              Show All
+            </button>
+          )}
         </div>
+
         <p className="text-[10px] text-[var(--text-3)] italic">
-          Tracks proposal variations at each communication step from start to consensus
+          💡 Click legend pills to isolate lines · Toggle Detail Zoom to expand close variations
         </p>
       </div>
     </div>
@@ -548,8 +776,9 @@ function MiniResourceCard({
     return found.length > 0 ? found : ['Government Agent', 'NGO Agent', 'District Administration Agent'];
   }, [participants, history]);
 
-  const { turns, globalMax } = useMemo(() => {
-    let max = capacity || 10;
+  const { turns, minY, maxY } = useMemo(() => {
+    let rawMin = Infinity;
+    let rawMax = -Infinity;
     const latest = {};
     const t = [];
 
@@ -562,14 +791,23 @@ function MiniResourceCard({
       agentList.forEach((a) => {
         const v = extractResourceValue(latest[a] || prop || {}, resourceName);
         vals[a] = v;
-        if (v > max) max = v;
+        if (v < rawMin) rawMin = v;
+        if (v > rawMax) rawMax = v;
       });
 
       t.push({ turn: idx + 1, vals });
     });
 
-    return { turns: t, globalMax: Math.ceil(max * 1.1) };
-  }, [history, agentList, resourceName, capacity]);
+    if (rawMin === Infinity) rawMin = 0;
+    if (rawMax === -Infinity) rawMax = 10;
+
+    const span = rawMax - rawMin;
+    const pad = Math.max(2, Math.ceil(span * 0.2));
+    const mi = Math.max(0, rawMin - pad);
+    const ma = Math.ceil(rawMax + pad) || 10;
+
+    return { turns: t, minY: mi, maxY: ma };
+  }, [history, agentList, resourceName]);
 
   const w = 260;
   const h = 75;
@@ -579,7 +817,11 @@ function MiniResourceCard({
 
   const totalTurns = Math.max(1, turns.length);
   const getX = (tn) => pad + ((tn - 1) / Math.max(1, totalTurns - 1)) * cW;
-  const getY = (v) => (globalMax === 0 ? pad + cH : pad + cH - (v / globalMax) * cH);
+  const getY = (v) => {
+    const range = Math.max(1, maxY - minY);
+    const clamped = Math.max(minY, Math.min(maxY, v));
+    return pad + cH - ((clamped - minY) / range) * cH;
+  };
 
   const lastTurn = turns[turns.length - 1];
 
@@ -608,20 +850,6 @@ function MiniResourceCard({
       {/* Mini SVG Sparkline */}
       <div className="my-2 overflow-hidden rounded-lg" style={{ background: 'var(--bg-surface-2)' }}>
         <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-14 select-none">
-          {/* Capacity dashed line */}
-          {capacity > 0 && capacity <= globalMax && (
-            <line
-              x1={pad}
-              y1={getY(capacity)}
-              x2={w - pad}
-              y2={getY(capacity)}
-              stroke="#ef4444"
-              strokeDasharray="2 2"
-              strokeWidth="1"
-              opacity="0.5"
-            />
-          )}
-
           {/* Lines for each agent */}
           {agentList.map((agent) => {
             const color = getAgentColor(agent);
@@ -635,10 +863,11 @@ function MiniResourceCard({
                 d={d}
                 fill="none"
                 stroke={color.stroke}
-                strokeWidth="1.8"
+                strokeWidth="2"
+                strokeDasharray={color.dashArray}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity="0.85"
+                opacity="0.9"
               />
             );
           })}

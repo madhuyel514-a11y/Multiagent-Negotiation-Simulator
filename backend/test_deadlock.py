@@ -18,6 +18,7 @@ This monkeypatches Agent.act so the test doesn't depend on a live LLM
 call — it only needs to exercise the orchestrator's own control flow.
 """
 
+import asyncio
 from services.negotiation_orchestrator import NegotiationOrchestrator
 
 
@@ -77,11 +78,11 @@ def run_test():
         "resourceQuantities": {"Water": 100},
     }
 
-    session_id = orchestrator.create_session(
+    session_id = asyncio.run(orchestrator.create_session(
         scenario=scenario,
         agents_config=agents_config,
         config=config,
-    )
+    ))
 
     # Monkeypatch each agent's act() so behavior is deterministic and
     # doesn't require network access / a real Gemini key.

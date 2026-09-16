@@ -69,6 +69,7 @@ class NegotiationOrchestrator:
         if entry is None:
             return
 
+        entry["state"]["gemini_metrics"] = get_gemini_metrics()
         entry["state"]["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         try:
@@ -336,9 +337,11 @@ class NegotiationOrchestrator:
         if session_id not in self.sessions:
             return {}
 
-        return self.sessions[
+        st = self.sessions[
             session_id
         ]["state"]
+        st["gemini_metrics"] = get_gemini_metrics()
+        return st
 
     # =========================================================
     # HUMAN MESSAGE
@@ -385,9 +388,21 @@ class NegotiationOrchestrator:
             "ACCEPT OFFER": "ACCEPT",
             "REJECT OFFER": "REJECT",
             "COUNTER OFFER": "COUNTER",
+            "COUNTER": "COUNTER",
+            "ACCEPT": "ACCEPT",
+            "REJECT": "REJECT",
+            "OFFER": "OFFER",
         }.get(normalized_action, normalized_action)
         if normalized_action not in ("OFFER", "COUNTER", "ACCEPT", "REJECT"):
-            normalized_action = "OFFER"
+            normalized_action = "COUNTER" if state.get("current_round", 1) > 1 else "OFFER"
+
+        current_round = state.get("current_round", 1)
+        history = state.get("history", [])
+        has_prior_turn = any(h.get("agent") in ("Human Participant", "You") or h.get("action") in ("OFFER", "COUNTER") for h in history)
+
+        # In Round > 1 or when prior offers exist, non-accept/reject submissions are COUNTERs
+        if (current_round > 1 or has_prior_turn) and normalized_action == "OFFER":
+            normalized_action = "COUNTER"
 
         # -----------------------------------------------------
         # GAP 1 FIX: build a structured proposal dict in the same
@@ -425,34 +440,17 @@ class NegotiationOrchestrator:
             if not resource_quantities or resource in resource_quantities:
                 structured_proposal = {resource: int(amount)}
 
-        proposal_parts = []
-
-        if action:
-            proposal_parts.append(
-                f"Action: {action}"
-            )
-
-        if resource and not has_nested_proposal:
-            proposal_parts.append(
-                f"Resource: {resource}"
-            )
-
-        if amount and not has_nested_proposal:
-            proposal_parts.append(
-                f"Amount: {amount}"
-            )
-
         if human_message:
-            proposal_parts.append(
-                f"Message: {human_message}"
-            )
-
-        final_message = (
-            " | ".join(proposal_parts)
-            if proposal_parts
-            else
-            "Human participant requests a fair allocation."
-        )
+            final_message = human_message
+        else:
+            if normalized_action == "ACCEPT":
+                final_message = "I accept the proposed resource allocation across all sectors."
+            elif normalized_action == "REJECT":
+                final_message = "I cannot accept the current resource allocation proposal."
+            elif normalized_action == "COUNTER":
+                final_message = "I counter with an adjusted resource allocation proposal across all sectors."
+            else:
+                final_message = "I submit this initial master allocation proposal across all sectors."
 
         incoming_proposal_snapshot = dict(state.get("current_proposal", {}))
 
@@ -1135,6 +1133,9 @@ class NegotiationOrchestrator:
         )
 
         action = evaluation.get("action", "COUNTER")
+        if len(state.get("history", [])) == 0 and action in ("COUNTER", "OFFER", "PROPOSE", "PROPOSAL", ""):
+            action = "OFFER"
+
         print(f"[DECISION] raw_llm_action={raw_action.upper() or 'NONE'}")
         print(f"[DECISION] final_action={action} satisfaction={evaluation.get('satisfaction')}")
         generated_proposal = (
@@ -1148,40 +1149,14 @@ class NegotiationOrchestrator:
             print(f"Parsed proposal from {agent.name}: {generated_proposal}")
             previous_proposal = dict(state.get("current_proposal", {}))
             state["current_proposal"] = dict(generated_proposal)
-            practice_mode = (
-                "Human Participant" in state.get(
-                    "accepted_proposals", {}
-                )
-                or any(
-                    item.get("agent") == "Human Participant"
-                    for item in state.get("history", [])
-                )
-            )
-            if practice_mode:
-                preserved_acceptances = {}
-                for accepted_agent, accepted_proposal in state.get(
-                    "accepted_proposals", {}
-                ).items():
-                    if accepted_proposal == state["current_proposal"]:
-                        preserved_acceptances[accepted_agent] = (
-                            accepted_proposal
-                        )
-                        print(
-                            "[CONSENSUS] preserving acceptance: "
-                            f"{accepted_agent}"
-                        )
-                    else:
-                        print(
-                            "[CONSENSUS] invalidating acceptance: "
-                            f"{accepted_agent}"
-                        )
-                state["accepted_proposals"] = preserved_acceptances
-            else:
-                state["accepted_proposals"] = {}
+            
+            # The countering agent proposes this new active allocation:
+            state["accepted_proposals"] = {agent.name: dict(state["current_proposal"])}
+            
             if previous_proposal != state["current_proposal"]:
                 print(
                     "[CONSENSUS] proposal changed; old acceptances "
-                    "were invalidated unless they matched the new proposal"
+                    "were reset for the new proposal"
                 )
             print(f"[PROPOSAL] counter={generated_proposal}")
             print(f"[PROPOSAL] full_allocation={state['current_proposal']}")
@@ -1199,12 +1174,6 @@ class NegotiationOrchestrator:
         print(f"[CONSENSUS] current_proposal_after={state.get('current_proposal', {})}")
         print(f"[PROPOSAL] full_allocation={state.get('current_proposal', {})}")
         print(f"[CONSENSUS] accepted_agents={list(state.get('accepted_proposals', {}))}")
-
-        # The original message from the LLM will be used directly.
-        # No more overwriting with _normalize_decision_message!
-
-        if action == "COUNTER" and str(raw_action or "").strip().upper() == "ACCEPT":
-            message += "\n\n[System Override: The agent attempted to accept, but consensus is impossible because total requested resources exceed available resources. Action overridden to COUNTER.]"
 
         # -----------------------------------------------------
         # SAVE AI MESSAGE
@@ -1384,6 +1353,7 @@ class NegotiationOrchestrator:
 
             state["status"] = "ongoing"
 
+        state["gemini_metrics"] = get_gemini_metrics()
         await self._persist_session(session_id)
 
         return self._build_response(
@@ -1589,6 +1559,7 @@ class NegotiationOrchestrator:
                 state["awaiting_final_decision"] = False
                 print(f"[PRACTICE] Round {state['current_round'] - 1} complete. Advanced to Round {state['current_round']}/{state['max_rounds']}.")
 
+        state["gemini_metrics"] = get_gemini_metrics()
         self._persist_session_fire_and_forget(session_id)
 
         return ai_responses
@@ -1619,6 +1590,7 @@ class NegotiationOrchestrator:
                 "type": "round_complete",
                 "ai_response": None,
                 "state": self.get_state(session_id),
+                "gemini_metrics": get_gemini_metrics(),
                 "round": state.get("current_round", 1),
                 "consensus": state.get("consensus", 0.0),
                 "negotiation_ended": True,
@@ -1645,6 +1617,7 @@ class NegotiationOrchestrator:
                 "agent_index": i,
                 "total_agents": len(agents),
                 "round": state.get("current_round", 1),
+                "gemini_metrics": get_gemini_metrics(),
             }
 
             # 2. Step the single agent
@@ -1659,6 +1632,7 @@ class NegotiationOrchestrator:
                 "total_agents": len(agents),
                 "ai_response": ai_result,
                 "state": current_state,
+                "gemini_metrics": get_gemini_metrics(),
                 "consensus": current_state.get("consensus", 0.0),
                 "round": current_state.get("current_round", 1),
                 "negotiation_ended": current_state.get("negotiation_ended", False),
@@ -1685,6 +1659,7 @@ class NegotiationOrchestrator:
         yield {
             "type": "round_complete",
             "state": final_state,
+            "gemini_metrics": get_gemini_metrics(),
             "round": final_state.get("current_round", 1),
             "consensus": final_state.get("consensus", 0.0),
             "negotiation_ended": final_state.get("negotiation_ended", False),
