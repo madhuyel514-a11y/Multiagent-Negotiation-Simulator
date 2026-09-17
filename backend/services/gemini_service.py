@@ -201,6 +201,8 @@ if Groq is not None:
 else:
     print("[GROQ] groq package not installed or import failed")
 
+_groq_circuit_broken = False
+
 def get_client():
     return next(_client_cycle) if _client_cycle else None
 
@@ -1130,71 +1132,71 @@ JSON Schema:
     # Try Groq first (Ultra-low latency: ~0.8s - 2.5s)
     # -----------------------------------------------------
 
-    if _groq_clients:
-        groq_models = [
-            GROQ_MODEL,
-            "qwen/qwen3.8-27b",
-        ]
-        groq_models = [m for m in dict.fromkeys(groq_models) if m]
+    global _groq_circuit_broken
+    if _groq_clients and not _groq_circuit_broken:
+        m_name = GROQ_MODEL or "llama-3.3-70b-versatile"
+        print(f"[GROQ] attempting request with model={m_name} (timeout=3.0s)")
+        start_time = time.perf_counter()
 
-        for client_index, client in enumerate(_groq_clients, 1):
-            for m_name in groq_models:
-                print(f"[GROQ] attempting request with model={m_name}")
-                start_time = time.perf_counter()
+        try:
+            client = _groq_clients[0]
+            response = client.chat.completions.create(
+                model=m_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            f"You are an AI disaster relief agency leader in a high-stakes emergency operations center. "
+                            f"Personality: {personality.upper()}. Scenario: {scenario_title}. "
+                            f"Output ONLY a raw, valid JSON object matching the requested schema. "
+                            f"Speak in 3 to 5 detailed, authentic, and realistic sentences reflecting your {personality} tone and scenario conditions. "
+                            f"NEVER use boilerplate greetings like 'Colleagues,' or 'I understand your point'."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": instruction,
+                    }
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=460,
+                temperature=0.35,
+                timeout=3.0,
+            )
+            latency_seconds = time.perf_counter() - start_time
+            text = (
+                response.choices[0].message.content
+                if response.choices
+                else ""
+            ) or ""
+            result, failure = _process_provider_response(
+                text,
+                allowed_resources,
+                resource_quantities,
+                scenario,
+            )
 
-                try:
-                    response = client.chat.completions.create(
-                        model=m_name,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    f"You are an AI disaster relief agency leader in a high-stakes emergency operations center. "
-                                    f"Personality: {personality.upper()}. Scenario: {scenario_title}. "
-                                    f"Output ONLY a raw, valid JSON object matching the requested schema. "
-                                    f"Speak in 3 to 5 detailed, authentic, and realistic sentences reflecting your {personality} tone and scenario conditions. "
-                                    f"NEVER use boilerplate greetings like 'Colleagues,' or 'I understand your point'."
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": instruction,
-                            }
-                        ],
-                        response_format={"type": "json_object"},
-                        max_tokens=460,
-                        temperature=0.35,
-                        timeout=3.5,
-                    )
-                    latency_seconds = time.perf_counter() - start_time
-                    text = (
-                        response.choices[0].message.content
-                        if response.choices
-                        else ""
-                    ) or ""
-                    result, failure = _process_provider_response(
-                        text,
-                        allowed_resources,
-                        resource_quantities,
-                        scenario,
-                    )
+            if result:
+                _record_successful_groq_metrics(
+                    agent_name=agent_name or current_agent,
+                    current_round=current_round,
+                    model_name=m_name,
+                    latency_seconds=latency_seconds,
+                    usage=getattr(response, "usage", None),
+                )
+                print(f"[GROQ] success in {latency_seconds:.2f}s with {m_name}")
+                return result
 
-                    if result:
-                        _record_successful_groq_metrics(
-                            agent_name=agent_name or current_agent,
-                            current_round=current_round,
-                            model_name=m_name,
-                            latency_seconds=latency_seconds,
-                            usage=getattr(response, "usage", None),
-                        )
-                        print(f"[GROQ] success in {latency_seconds:.2f}s with {m_name}")
-                        return result
-
-                    print(f"[GROQ] validation failed for {m_name}: {failure}")
-                except Exception as exc:
-                    print(f"[GROQ] model {m_name} request failed ({_failure_category(exc)}): {exc}")
+            print(f"[GROQ] validation failed for {m_name}: {failure}")
+            _groq_circuit_broken = True
+            print("[GROQ] Circuit breaker tripped. Directly routing all future turns to Gemini.")
+        except Exception as exc:
+            _groq_circuit_broken = True
+            print(f"[GROQ] request failed or timed out ({_failure_category(exc)}): {exc}. Circuit breaker tripped: routing all future turns directly to Gemini.")
+    elif _groq_circuit_broken:
+        print("[GROQ] Bypassed (circuit breaker active). Using Gemini directly.")
     else:
-        print(f"[GROQ] no configured clients available")
+        print("[GROQ] no configured clients available")
 
     print("[GEMINI] fallback request")
 
@@ -1640,27 +1642,30 @@ Return ONLY valid JSON matching this exact structure:
 """
 
     # 1. Try Groq
-    if _groq_clients:
-        for client in _groq_clients:
-            try:
-                response = client.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=[{"role": "user", "content": instruction}],
-                    response_format={"type": "json_object"},
-                )
-                text = (response.choices[0].message.content if response.choices else "") or ""
-                parsed = _extract_json(text)
-                if parsed and isinstance(parsed, dict) and parsed.get("message"):
-                    return {
-                        "action": parsed.get("action", default_action),
-                        "resource": parsed.get("resource", primary_resource),
-                        "amount": parsed.get("amount", suggested_amount),
-                        "message": parsed.get("message", default_message),
-                        "reasoning": parsed.get("reasoning", default_reasoning),
-                        "proposal": parsed.get("proposal", balanced_proposal),
-                    }
-            except Exception as e:
-                print(f"[SUGGESTION] Groq attempt failed: {e}")
+    global _groq_circuit_broken
+    if _groq_clients and not _groq_circuit_broken:
+        try:
+            client = _groq_clients[0]
+            response = client.chat.completions.create(
+                model=GROQ_MODEL or "llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": instruction}],
+                response_format={"type": "json_object"},
+                timeout=3.0,
+            )
+            text = (response.choices[0].message.content if response.choices else "") or ""
+            parsed = _extract_json(text)
+            if parsed and isinstance(parsed, dict) and parsed.get("message"):
+                return {
+                    "action": parsed.get("action", default_action),
+                    "resource": parsed.get("resource", primary_resource),
+                    "amount": parsed.get("amount", suggested_amount),
+                    "message": parsed.get("message", default_message),
+                    "reasoning": parsed.get("reasoning", default_reasoning),
+                    "proposal": parsed.get("proposal", balanced_proposal),
+                }
+        except Exception as e:
+            _groq_circuit_broken = True
+            print(f"[SUGGESTION] Groq attempt failed ({e}). Circuit breaker tripped.")
 
     # 2. Try Gemini
     for client in _clients:
