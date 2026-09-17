@@ -15,6 +15,10 @@ import {
   Users,
   ChevronDown,
   ChevronUp,
+  Play,
+  Pause,
+  ArrowRight,
+  Zap,
 } from 'lucide-react';
 
 import { scenarios } from '../data/scenarios';
@@ -643,6 +647,13 @@ function PracticeMode() {
     INITIAL_LLM_METRICS
   );
 
+  const [nextAgent, setNextAgent] = useState(null);
+  const [aiRoundFinished, setAiRoundFinished] = useState(true);
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
+  const autoRunningRef = useRef(false);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const autoAdvanceRef = useRef(true);
+
   // --------------------------------------------------
   // DOWNLOAD SUMMARY REPORT
   // --------------------------------------------------
@@ -868,6 +879,10 @@ function PracticeMode() {
       setAction('Offer');
       setFinalAllocation(null);
       setFinalReport(null);
+      setNextAgent(null);
+      setAiRoundFinished(true);
+      setIsAutoRunning(false);
+      autoRunningRef.current = false;
 
       setMessages([]);
     } catch (error) {
@@ -1070,250 +1085,113 @@ function PracticeMode() {
           : {}),
       };
 
-      let streamSucceeded = false;
-
-      // 1. Try progressive streaming endpoint for live agent-by-agent updates
-      try {
-        const streamResponse = await fetch(
-          `${API_URL}/api/practice/stream-turn`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload),
-          }
-        );
-
-        if (streamResponse.ok && streamResponse.body) {
-          const reader = streamResponse.body.getReader();
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const parts = buffer.split('\n\n');
-            buffer = parts.pop();
-
-            for (const part of parts) {
-              const trimmed = part.trim();
-              if (!trimmed.startsWith('data:')) continue;
-              const jsonStr = trimmed.replace(/^data:\s*/, '').trim();
-              if (!jsonStr) continue;
-
-              try {
-                const event = JSON.parse(jsonStr);
-
-                if (event.type === 'agent_start') {
-                  setDeliberatingAgent(event.agent);
-                  setStatus(`${event.agent} is deliberating their response...`);
-                } else if (event.type === 'agent_response') {
-                  const aiResp = event.ai_response;
-                  const agentName = event.agent || aiResp?.agent;
-                  setDeliberatingAgent(null);
-
-                  if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
-                    setCurrentProposal(aiResp.current_proposal);
-                  }
-                  const incomingMetrics = aiResp?.gemini_metrics || event?.gemini_metrics || event?.state?.gemini_metrics;
-                  if (incomingMetrics) {
-                    setLlmMetrics(normalizeLlmMetrics(incomingMetrics));
-                  }
-                  if (event.consensus !== undefined && event.consensus !== null) {
-                    setConsensus(Number(event.consensus));
-                  }
-
-                  const history = aiResp?.history || [];
-                  const matchingTurn = history.length
-                    ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
-                    : null;
-
-                  if (aiResp?.message) {
-                    setMessages((previous) => [
-                      ...previous,
-                      {
-                        sender: agentName || 'AI Agent',
-                        text: aiResp.message,
-                        action: matchingTurn?.action || aiResp?.action || 'COUNTER',
-                        stance: matchingTurn?.stance || aiResp?.stance || 'firm',
-                        round: currentTurnRound,
-                        proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
-                        reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
-                      },
-                    ]);
-                  }
-                } else if (event.type === 'round_complete') {
-                  setDeliberatingAgent(null);
-                  const stateObj = event.state;
-
-                  const roundMetrics = event?.gemini_metrics || stateObj?.gemini_metrics;
-                  if (roundMetrics) {
-                    setLlmMetrics(normalizeLlmMetrics(roundMetrics));
-                  }
-
-                  const consensusVal = event.consensus ?? stateObj?.consensus;
-                  if (consensusVal !== undefined && consensusVal !== null) {
-                    setConsensus(Number(consensusVal));
-                  }
-
-                  const isConsensus = event.consensus_reached || stateObj?.consensus_reached;
-                  const isEnded = event.negotiation_ended || stateObj?.negotiation_ended;
-                  const isAwaitingFinal = event.awaiting_final_decision || stateObj?.awaiting_final_decision;
-
-                  if (event.final_report || stateObj?.final_report) {
-                    setFinalReport(event.final_report || stateObj?.final_report);
-                  }
-                  if (event.final_allocation || stateObj?.final_allocation) {
-                    setFinalAllocation(event.final_allocation || stateObj?.final_allocation);
-                  }
-
-                  if (isConsensus) {
-                    setSessionStatus('Agreement reached');
-                    setStatus('Negotiation complete');
-                    setAwaitingFinalDecision(false);
-                  } else if (isEnded) {
-                    setSessionStatus('Negotiation ended');
-                    setStatus('Negotiation complete');
-                    setAwaitingFinalDecision(false);
-                  } else if (isAwaitingFinal) {
-                    setAwaitingFinalDecision(true);
-                    setStatus('Final Decision');
-                    setSessionStatus('Deliberation Complete');
-                  } else {
-                    setAwaitingFinalDecision(false);
-                    const nextRound = event.round ?? stateObj?.current_round;
-                    if (nextRound !== undefined && nextRound !== null) {
-                      setRound(Math.min(Number(nextRound), totalRounds));
-                    }
-                    setSessionStatus('Active');
-                    setStatus('Your turn');
-                    setAction('Counter Offer');
-                  }
-                }
-              } catch (e) {
-                console.warn('Failed to parse SSE event chunk:', e, jsonStr);
-              }
-            }
-          }
-          streamSucceeded = true;
+      const response = await fetch(
+        `${API_URL}/api/practice/turn`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
         }
-      } catch (streamErr) {
-        console.warn('Streaming error, falling back to batch turn:', streamErr);
+      );
+
+      const responseText = await response.text();
+
+      if (!response.ok) {
+        throw new Error(
+          `Practice turn failed: ${response.status} ${responseText}`
+        );
       }
 
-      // 2. Fallback to standard batch turn if stream did not complete
-      if (!streamSucceeded) {
-        const response = await fetch(
-          `${API_URL}/api/practice/turn`,
+      const data = JSON.parse(responseText);
+      const aiResp = data?.ai_response;
+      const stateObj = data?.state;
+
+      if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
+        setCurrentProposal(aiResp.current_proposal);
+      }
+
+      const incomingMetrics = data?.gemini_metrics || stateObj?.gemini_metrics || aiResp?.gemini_metrics;
+      if (incomingMetrics) {
+        setLlmMetrics(normalizeLlmMetrics(incomingMetrics));
+      }
+
+      if (data?.consensus !== undefined && data?.consensus !== null) {
+        setConsensus(Number(data.consensus));
+      }
+
+      if (aiResp?.message) {
+        const history = aiResp?.history || stateObj?.history || [];
+        const agentName = aiResp?.agent || 'Government Agent';
+        const matchingTurn = history.length
+          ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
+          : null;
+
+        setMessages((previous) => [
+          ...previous,
           {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload),
-          }
-        );
+            sender: agentName,
+            text: aiResp.message,
+            action: matchingTurn?.action || aiResp?.action || 'COUNTER',
+            stance: matchingTurn?.stance || aiResp?.stance || 'firm',
+            round: currentTurnRound,
+            proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
+            reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
+          },
+        ]);
+      }
 
-        const responseText = await response.text();
+      const isConsensus = data?.consensus_reached || stateObj?.consensus_reached;
+      const isEnded = data?.negotiation_ended || stateObj?.negotiation_ended;
+      const isAwaitingFinal = data?.awaiting_final_decision || stateObj?.awaiting_final_decision;
 
-        if (!response.ok) {
-          throw new Error(
-            `Practice turn failed: ${response.status} ${responseText}`
-          );
+      if (data?.final_report || stateObj?.final_report) {
+        setFinalReport(data?.final_report || stateObj?.final_report);
+      }
+      if (data?.final_allocation || stateObj?.final_allocation) {
+        setFinalAllocation(data?.final_allocation || stateObj?.final_allocation);
+      }
+
+      const finished = data?.ai_round_finished ?? (data?.next_agent == null);
+      setAiRoundFinished(finished);
+      setNextAgent(data?.next_agent || null);
+
+      if (isConsensus) {
+        setSessionStatus('Agreement reached');
+        setStatus('Negotiation complete');
+        setAwaitingFinalDecision(false);
+        setIsAutoRunning(false);
+      } else if (isEnded) {
+        setSessionStatus('Negotiation ended');
+        setStatus('Negotiation complete');
+        setAwaitingFinalDecision(false);
+        setIsAutoRunning(false);
+      } else if (isAwaitingFinal) {
+        setAwaitingFinalDecision(true);
+        setStatus('Final Decision');
+        setSessionStatus('Deliberation Complete');
+        setIsAutoRunning(false);
+      } else if (finished) {
+        const nextRound = data?.round ?? stateObj?.current_round;
+        if (nextRound !== undefined && nextRound !== null) {
+          setRound(Math.min(Number(nextRound), totalRounds));
         }
-
-        const data = JSON.parse(responseText);
-        const aiResponses = Array.isArray(data?.ai_responses) && data.ai_responses.length > 0
-          ? data.ai_responses
-          : [data?.ai_response || data?.ai || data].filter(Boolean);
-
-        const newMessages = [];
-        let latestProposal = currentProposal;
-        let lastMetrics = llmMetrics;
-
-        for (const aiResp of aiResponses) {
-          if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
-            latestProposal = aiResp.current_proposal;
-          }
-
-          if (aiResp?.gemini_metrics) {
-            lastMetrics = aiResp.gemini_metrics;
-          }
-
-          const history = aiResp?.history || [];
-          const agentName = aiResp?.agent;
-          const matchingTurn = history.length
-            ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
-            : null;
-
-          if (aiResp?.message) {
-            newMessages.push({
-              sender: agentName || 'AI Agent',
-              text: aiResp.message,
-              action: matchingTurn?.action || aiResp?.action || 'COUNTER',
-              stance: matchingTurn?.stance || aiResp?.stance || 'firm',
-              round: currentTurnRound,
-              proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
-              reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
-            });
-          }
-        }
-
-        if (latestProposal && Object.keys(latestProposal).length > 0) {
-          setCurrentProposal(latestProposal);
-        }
-
-        const finalMetrics = data?.gemini_metrics || data?.state?.gemini_metrics || lastMetrics;
-        if (finalMetrics) {
-          setLlmMetrics(normalizeLlmMetrics(finalMetrics));
-        }
-
-        if (newMessages.length > 0) {
-          setMessages((previous) => [...previous, ...newMessages]);
-        }
-
-        const stateObj = data?.state;
-
-        const consensusVal = data?.consensus ?? stateObj?.consensus;
-        if (consensusVal !== undefined && consensusVal !== null) {
-          setConsensus(Number(consensusVal));
-        }
-
-        const isConsensus = data?.consensus_reached || stateObj?.consensus_reached;
-        const isEnded = data?.negotiation_ended || stateObj?.negotiation_ended;
-        const isAwaitingFinal = data?.awaiting_final_decision || stateObj?.awaiting_final_decision;
-
-        if (data?.final_report || stateObj?.final_report) {
-          setFinalReport(data?.final_report || stateObj?.final_report);
-        }
-        if (data?.final_allocation || stateObj?.final_allocation) {
-          setFinalAllocation(data?.final_allocation || stateObj?.final_allocation);
-        }
-
-        if (isConsensus) {
-          setSessionStatus('Agreement reached');
-          setStatus('Negotiation complete');
-          setAwaitingFinalDecision(false);
-        } else if (isEnded) {
-          setSessionStatus('Negotiation ended');
-          setStatus('Negotiation complete');
-          setAwaitingFinalDecision(false);
-        } else if (isAwaitingFinal) {
-          setAwaitingFinalDecision(true);
-          setStatus('Final Decision');
-          setSessionStatus('Deliberation Complete');
-        } else {
-          setAwaitingFinalDecision(false);
-          const nextRound = data?.round ?? stateObj?.current_round;
-          if (nextRound !== undefined && nextRound !== null) {
-            setRound(Math.min(Number(nextRound), totalRounds));
-          }
-          setSessionStatus('Active');
-          setStatus('Your turn');
-          setAction('Counter Offer');
+        setSessionStatus('Active');
+        setStatus('Your turn');
+        setAction('Counter Offer');
+        setIsAutoRunning(false);
+      } else {
+        setSessionStatus('Active');
+        setStatus(`Next: ${data?.next_agent || 'Next Agent'}`);
+        if (autoAdvanceRef.current || autoRunningRef.current) {
+          setIsAutoRunning(true);
+          autoRunningRef.current = true;
+          setTimeout(() => {
+            if (autoRunningRef.current) {
+              callNextAgent();
+            }
+          }, 800);
         }
       }
     } catch (error) {
@@ -1332,9 +1210,160 @@ function PracticeMode() {
       ]);
 
       setStatus('Connection error');
+      setIsAutoRunning(false);
+      autoRunningRef.current = false;
     } finally {
       setLoading(false);
       setDeliberatingAgent(null);
+    }
+  };
+
+  // --------------------------------------------------
+  // STEP NEXT SINGLE AI AGENT (1 CLICK = 1 AGENT)
+  // --------------------------------------------------
+
+  const callNextAgent = async () => {
+    if (!sessionId || loading) return;
+
+    try {
+      setLoading(true);
+      const targetAgent = nextAgent || 'Next Agent';
+      setDeliberatingAgent(targetAgent);
+      setStatus(`${targetAgent} is deliberating...`);
+
+      const response = await fetch(`${API_URL}/api/practice/next-agent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+
+      const responseText = await response.text();
+      if (!response.ok) {
+        throw new Error(`Failed to advance agent: ${response.status} ${responseText}`);
+      }
+
+      const data = JSON.parse(responseText);
+      const aiResp = data?.ai_response;
+      const stateObj = data?.state;
+
+      if (aiResp?.current_proposal && Object.keys(aiResp.current_proposal).length > 0) {
+        setCurrentProposal(aiResp.current_proposal);
+      }
+
+      const incomingMetrics = data?.gemini_metrics || stateObj?.gemini_metrics || aiResp?.gemini_metrics;
+      if (incomingMetrics) {
+        setLlmMetrics(normalizeLlmMetrics(incomingMetrics));
+      }
+
+      if (data?.consensus !== undefined && data?.consensus !== null) {
+        setConsensus(Number(data.consensus));
+      }
+
+      if (aiResp?.message) {
+        const history = aiResp?.history || stateObj?.history || [];
+        const agentName = aiResp?.agent || targetAgent;
+        const matchingTurn = history.length
+          ? [...history].reverse().find((h) => h.agent === agentName) || history[history.length - 1]
+          : null;
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: agentName,
+            text: aiResp.message,
+            action: matchingTurn?.action || aiResp?.action || 'COUNTER',
+            stance: matchingTurn?.stance || aiResp?.stance || 'firm',
+            round: data?.round ?? round,
+            proposal: matchingTurn?.parsed_proposal || aiResp?.parsed_proposal,
+            reasoning: aiResp?.reasoning || matchingTurn?.reasoning,
+          },
+        ]);
+      }
+
+      const isConsensus = data?.consensus_reached || stateObj?.consensus_reached;
+      const isEnded = data?.negotiation_ended || stateObj?.negotiation_ended;
+      const isAwaitingFinal = data?.awaiting_final_decision || stateObj?.awaiting_final_decision;
+
+      if (data?.final_report || stateObj?.final_report) {
+        setFinalReport(data?.final_report || stateObj?.final_report);
+      }
+      if (data?.final_allocation || stateObj?.final_allocation) {
+        setFinalAllocation(data?.final_allocation || stateObj?.final_allocation);
+      }
+
+      const finished = data?.ai_round_finished ?? (data?.next_agent == null);
+      setAiRoundFinished(finished);
+      setNextAgent(data?.next_agent || null);
+
+      if (isConsensus) {
+        setSessionStatus('Agreement reached');
+        setStatus('Negotiation complete');
+        setAwaitingFinalDecision(false);
+        setIsAutoRunning(false);
+        autoRunningRef.current = false;
+      } else if (isEnded) {
+        setSessionStatus('Negotiation ended');
+        setStatus('Negotiation complete');
+        setAwaitingFinalDecision(false);
+        setIsAutoRunning(false);
+        autoRunningRef.current = false;
+      } else if (isAwaitingFinal) {
+        setAwaitingFinalDecision(true);
+        setStatus('Final Decision');
+        setSessionStatus('Deliberation Complete');
+        setIsAutoRunning(false);
+        autoRunningRef.current = false;
+      } else if (finished) {
+        const nextRound = data?.round ?? stateObj?.current_round;
+        if (nextRound !== undefined && nextRound !== null) {
+          setRound(Math.min(Number(nextRound), totalRounds));
+        }
+        setSessionStatus('Active');
+        setStatus('Your turn');
+        setAction('Counter Offer');
+        setIsAutoRunning(false);
+        autoRunningRef.current = false;
+      } else {
+        setSessionStatus('Active');
+        setStatus(`Next: ${data?.next_agent || 'Next Agent'}`);
+        if (autoRunningRef.current) {
+          setTimeout(() => {
+            if (autoRunningRef.current) {
+              callNextAgent();
+            }
+          }, 800);
+        }
+      }
+    } catch (err) {
+      console.error('Next agent error:', err);
+      setIsAutoRunning(false);
+      autoRunningRef.current = false;
+      setStatus('Your turn');
+    } finally {
+      setLoading(false);
+      setDeliberatingAgent(null);
+    }
+  };
+
+  const toggleAutoRun = () => {
+    const nextState = !isAutoRunning;
+    setIsAutoRunning(nextState);
+    autoRunningRef.current = nextState;
+    if (nextState && nextAgent && !loading && !aiRoundFinished) {
+      callNextAgent();
+    }
+  };
+
+  const toggleAutoAdvance = () => {
+    const nextVal = !autoAdvance;
+    setAutoAdvance(nextVal);
+    autoAdvanceRef.current = nextVal;
+    if (nextVal && nextAgent && !loading && !aiRoundFinished && !isAutoRunning) {
+      setIsAutoRunning(true);
+      autoRunningRef.current = true;
+      callNextAgent();
     }
   };
 
@@ -1918,6 +1947,37 @@ function PracticeMode() {
             Download Summary
               </button>
 
+              <button
+                type="button"
+                onClick={toggleAutoAdvance}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold transition border shadow-sm ${
+                  autoAdvance
+                    ? 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[var(--text-2)] hover:border-slate-500'
+                }`}
+                title="When ON, AI agents deliberate automatically each round without pressing Next"
+              >
+                <Zap size={14} className={autoAdvance ? 'fill-amber-400 text-amber-400' : 'text-slate-400'} />
+                <span>Auto: {autoAdvance ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {nextAgent && !aiRoundFinished && (
+                <button
+                  type="button"
+                  onClick={toggleAutoRun}
+                  disabled={loading}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    isAutoRunning
+                      ? 'bg-amber-500 text-white animate-pulse shadow-md'
+                      : 'border border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                  }`}
+                  title={isAutoRunning ? "Pause current auto-deliberation" : "Auto-deliberate remaining agents in this round"}
+                >
+                  {isAutoRunning ? <Pause size={14} /> : <Play size={14} />}
+                  {isAutoRunning ? 'Pause Auto' : 'Auto Deliberate'}
+                </button>
+              )}
+
               <span className="rounded-full bg-blue-500/15 border border-blue-500/30 px-4 py-2 text-sm font-semibold text-blue-400">
                 Round {round} / {totalRounds}
               </span>
@@ -2421,14 +2481,62 @@ function PracticeMode() {
                     )}
                   </div>
 
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={toggleAutoAdvance}
+                      className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition border ${
+                        autoAdvance
+                          ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-surface-2)] text-[var(--text-2)] hover:border-slate-500'
+                      }`}
+                      title="When ON, AI agents deliberate automatically each round without pressing Next"
+                    >
+                      <Zap size={14} className={autoAdvance ? 'fill-amber-400 text-amber-400' : 'text-slate-400'} />
+                      <span>Auto-Advance: {autoAdvance ? 'ON' : 'OFF'}</span>
+                    </button>
+
+                    {nextAgent && !aiRoundFinished && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={toggleAutoRun}
+                          disabled={loading}
+                          className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition shadow-sm ${
+                            isAutoRunning
+                              ? 'bg-amber-600 text-white animate-pulse'
+                              : 'border border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                          }`}
+                          title={isAutoRunning ? "Pause current auto-deliberation" : "Automatically deliberate remaining agents in this round without manual clicking"}
+                        >
+                          {isAutoRunning ? <Pause size={16} /> : <Play size={16} />}
+                          {isAutoRunning ? 'Pause Auto' : 'Auto Deliberate'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={callNextAgent}
+                          disabled={loading || isAutoRunning}
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-700 px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-emerald-700 hover:to-teal-800 disabled:opacity-50"
+                          title={`Step only ${nextAgent}`}
+                        >
+                          <ArrowRight size={16} />
+                          Next: {nextAgent}
+                        </button>
+                      </>
+                    )}
+                  </div>
+
                   <button
                     type="button"
                     onClick={handleSend}
-                    disabled={loading || status !== 'Your turn'}
+                    disabled={loading}
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 px-6 py-3 text-sm font-bold text-white shadow-md transition hover:from-blue-700 hover:to-indigo-800 focus:ring-2 focus:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Send size={16} />
-                    Submit {round === 1 ? 'Initial Proposal' : 'Allocation'} (Round {round})
+                    {status === 'Your turn'
+                      ? `Submit ${round === 1 ? 'Initial Proposal' : 'Allocation'} (Round ${round})`
+                      : `Send Counter-Offer (Round ${round})`}
                   </button>
                 </div>
               </div>

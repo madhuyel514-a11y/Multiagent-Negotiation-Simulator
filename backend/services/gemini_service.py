@@ -909,6 +909,7 @@ async def ask_model(
     stubborn_until=None,
     practice_mode=False,
     personality=None,
+    last_proposer=None,
 ):
     # Use provided agent_name if available, otherwise try to detect from prompt
     current_agent = agent_name.lower() if agent_name else _detect_agent(prompt)
@@ -955,17 +956,20 @@ async def ask_model(
 
     recipients = scenario.get("recipients", [])
     if recipients:
-        recipient_names = [r.get("name") for r in recipients]
+        recipient_names = [r.get("name") if isinstance(r, dict) else str(r) for r in recipients]
         recipients_str = "AFFECTED AREAS (RECIPIENTS):\n" + "\n".join(
-            f" - {r.get('name')}: Population {r.get('population', 'Unknown')}, Severity {r.get('severity', 'Unknown')}. Critical Needs: {', '.join(r.get('needs', []))}"
+            (f" - {r.get('name')}: Population {r.get('population', 'Unknown')}, Severity {r.get('severity', 'Unknown')}. Critical Needs: {', '.join(r.get('needs', []))}"
+             if isinstance(r, dict)
+             else f" - {str(r)}")
             for r in recipients
         )
     else:
         recipient_names = agent_names or [agent_name or "Current Agent"]
         recipients_str = "No specific affected areas provided. Allocate to the agents instead."
 
+    proposer_tag = f" (active offer from {last_proposer})" if last_proposer else ""
     incoming_proposal_str = (
-        "; ".join(f"{name}: {quantity} units" for name, quantity in current_proposal.items())
+        f"{'; '.join(f'{name}: {quantity} units' for name, quantity in current_proposal.items())}{proposer_tag}"
         if current_proposal
         else "No incoming proposal yet; make the opening offer."
     )
@@ -1066,15 +1070,14 @@ async def ask_model(
 - Only consider ACCEPTING easily in the final rounds (Round {max_rounds - 1} or {max_rounds}) to avoid a total failure to reach consensus."""
 
     practice_mode_instruction = """
-=== MULTI-AGENT ROUNDTABLE PRACTICE MODE ===
-- You are seated in an Emergency Operations Center conference room alongside a Human Crisis Coordinator and other agency leaders (Government, NGO, District Administration).
-- All 4 of you are negotiating the SAME disaster relief resource pool for the affected areas.
-- The Human Coordinator has just submitted/revised a master proposal.
-- Evaluate the Human Coordinator's proposal and speech carefully against your core operational priorities and constraints.
-- If other AI department heads have already spoken earlier in this round, DIRECTLY ADDRESS their points (e.g. agree with their valid points, push back if they are taking too much, or offer specific compromises).
-- If the allocation is fair, adheres to total resource availability, and reasonably meets your high-priority needs, choose ACCEPT.
-- If an essential requirement is unmet, choose COUNTER with concrete numbers for all areas and explain the exact trade-offs needed.
-- Speak naturally and passionately in the first person ("As the Government authority...", "Our medical teams at the NGO cannot...", "The District roads are blocked..."). Never sound robotic or generic.
+=== MULTI-AGENT ROUNDTABLE NEGOTIATION ===
+- You are seated at an emergency multi-agency roundtable alongside all participating stakeholders: Government Agent, NGO Agent, District Administration Agent, and Human Participant.
+- ALL 4 participants are equal negotiating stakeholders. Consider and engage with ALL agents equally, exactly as in multi-agent deliberations.
+- Do NOT focus solely or primarily on the Human Participant. Address whichever agency proposed the active incoming offer or raised competing demands (Government, NGO, District, or Human).
+- Directly debate the trade-offs across the whole table. Challenge excessive allocations taken by other agencies, acknowledge valid points from any stakeholder, and defend your agency's core mandate.
+- If the active allocation is fair, adheres to the total resource pool, and reasonably satisfies your high-priority needs, choose ACCEPT.
+- If an essential requirement is unmet, choose COUNTER with concrete numbers for all areas and explain the exact trade-offs needed across all agencies.
+- Speak naturally and passionately in the first person representing your agency's mandate. Never sound robotic or generic.
 - As the round number approaches the maximum deadline, demonstrate increasing urgency to collaborate and reach a life-saving consensus before time runs out.
 """ if practice_mode else ""
     practice_mode_section = (
@@ -1494,8 +1497,12 @@ def generate_human_suggestion(
     )
 
     # 2. Identify top critical region and primary resource
+    safe_recipients = [
+        r if isinstance(r, dict) else {"name": str(r), "severity": "High", "population": 10000, "needs": []}
+        for r in (recipients or [])
+    ]
     sorted_recipients = sorted(
-        recipients,
+        safe_recipients,
         key=lambda r: (
             3 if "crit" in str(r.get("severity", "")).lower() else
             2 if "high" in str(r.get("severity", "")).lower() else
@@ -1503,7 +1510,7 @@ def generate_human_suggestion(
             float(r.get("population", 0)) if str(r.get("population", 0)).isdigit() else 0
         ),
         reverse=True
-    ) if recipients else []
+    ) if safe_recipients else []
 
     top_district_obj = sorted_recipients[0] if sorted_recipients else {}
     top_district_name = top_district_obj.get("name", "Critical Sector")

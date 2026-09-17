@@ -251,6 +251,9 @@ class NegotiationOrchestrator:
             # The proposal currently being evaluated by the agents.
             "current_proposal": {},
 
+            # The agent/participant who authored the current proposal.
+            "last_proposer": None,
+
             # Agent name -> exact proposal accepted by that agent.
             "accepted_proposals": {},
 
@@ -469,6 +472,7 @@ class NegotiationOrchestrator:
         if normalized_action in ("OFFER", "COUNTER") and structured_proposal:
             state["last_proposals"]["Human Participant"] = dict(structured_proposal)
             state["current_proposal"] = dict(structured_proposal)
+            state["last_proposer"] = "Human Participant"
             
             # Preserve existing acceptances from other agents that match this proposal
             preserved = {"Human Participant": dict(structured_proposal)}
@@ -1009,6 +1013,7 @@ class NegotiationOrchestrator:
             "total_budget": state.get("total_budget"),
             "last_proposals": state.get("last_proposals", {}),
             "current_proposal": state.get("current_proposal", {}),
+            "last_proposer": state.get("last_proposer"),
             "agents": state.get("agents", []),
             "practice_mode": practice_mode,
 
@@ -1085,7 +1090,7 @@ class NegotiationOrchestrator:
 
         recipients = state.get("scenario", {}).get("recipients", [])
         if recipients:
-            recipient_names = [r.get("name") for r in recipients]
+            recipient_names = [r.get("name") if isinstance(r, dict) else str(r) for r in recipients]
         else:
             recipient_names = [item.name for item in agents]
 
@@ -1149,6 +1154,7 @@ class NegotiationOrchestrator:
             print(f"Parsed proposal from {agent.name}: {generated_proposal}")
             previous_proposal = dict(state.get("current_proposal", {}))
             state["current_proposal"] = dict(generated_proposal)
+            state["last_proposer"] = agent.name
             
             # The countering agent proposes this new active allocation:
             state["accepted_proposals"] = {agent.name: dict(state["current_proposal"])}
@@ -1563,6 +1569,99 @@ class NegotiationOrchestrator:
         self._persist_session_fire_and_forget(session_id)
 
         return ai_responses
+
+    async def step_practice_single_agent_async(
+        self,
+        session_id: str
+    ) -> Dict[str, Any]:
+        """
+        Executes a single AI agent turn in Practice Mode (turn-by-turn: 1 click = 1 agent).
+        Returns the agent response, state, next agent, and whether the AI round deliberation has concluded.
+        """
+        if session_id not in self.sessions:
+            raise ValueError(
+                "Negotiation session not found."
+            )
+
+        entry = self.sessions[session_id]
+        agents = entry["agents"]
+        state = entry["state"]
+
+        if state.get("negotiation_ended"):
+            return {
+                "ai_response": self._build_response(state, None, None, None, None),
+                "state": self.get_state(session_id),
+                "ai_round_finished": True,
+                "next_agent": None,
+                "round": state.get("current_round", 1),
+                "status": state.get("status", "Negotiation complete"),
+                "consensus": state.get("consensus", 0.0),
+                "negotiation_ended": True,
+                "awaiting_final_decision": False,
+                "final_allocation": state.get("final_allocation"),
+                "final_report": state.get("final_report"),
+            }
+
+        # Step exactly ONE agent using the async step method
+        ai_result = await self._step_async(session_id)
+
+        # In _step_async, current_agent_idx was incremented. If round_finished occurred, it was reset to 0.
+        ai_round_finished = (state.get("current_agent_idx", 0) == 0)
+
+        next_agent_name = None
+        if not ai_round_finished and not state.get("negotiation_ended"):
+            next_agent_idx = state.get("current_agent_idx", 0) % len(agents)
+            next_agent_name = agents[next_agent_idx].name
+            state["status"] = f"Next: {next_agent_name}"
+        elif ai_round_finished and not state.get("negotiation_ended"):
+            # All AI agents for this round have finished!
+            if self._check_practice_deadlock(state):
+                state["awaiting_final_decision"] = False
+            elif state["current_round"] >= state["max_rounds"]:
+                state["awaiting_final_decision"] = True
+                state["status"] = "Final Decision"
+                print(f"[PRACTICE] Round {state['current_round']}/{state['max_rounds']} AI deliberation complete. Awaiting human final decision.")
+            else:
+                state["current_round"] += 1
+                state["prev_proposals"] = dict(state.get("last_proposals", {}))
+                state["status"] = "Your turn"
+                state["awaiting_final_decision"] = False
+                print(f"[PRACTICE] Round {state['current_round'] - 1} complete. Advanced to Round {state['current_round']}/{state['max_rounds']}.")
+
+        state["gemini_metrics"] = get_gemini_metrics()
+        await self._persist_session(session_id)
+
+        return {
+            "ai_response": ai_result,
+            "state": self.get_state(session_id),
+            "ai_round_finished": ai_round_finished,
+            "next_agent": next_agent_name,
+            "round": state.get("current_round", 1),
+            "status": state.get("status", "Your turn"),
+            "consensus": state.get("consensus", 0.0),
+            "negotiation_ended": state.get("negotiation_ended", False),
+            "awaiting_final_decision": state.get("awaiting_final_decision", False),
+            "final_allocation": state.get("final_allocation"),
+            "final_report": state.get("final_report"),
+        }
+
+    def step_practice_single_agent(
+        self,
+        session_id: str
+    ) -> Dict[str, Any]:
+        """Synchronous wrapper for step_practice_single_agent_async."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(lambda: asyncio.run(self.step_practice_single_agent_async(session_id)))
+                return future.result()
+        return asyncio.run(self.step_practice_single_agent_async(session_id))
+
 
     # =========================================================
     # PRACTICE ROUNDTABLE STREAMING STEP

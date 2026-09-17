@@ -73,6 +73,7 @@ class BaseAgent:
                 stubborn_until=context.get("stubborn_until"),
                 practice_mode=context.get("practice_mode", False),
                 personality=self.personality,
+                last_proposer=context.get("last_proposer"),
             )
         else:
             result = gemini_ask(
@@ -82,6 +83,7 @@ class BaseAgent:
                 stubborn_until=context.get("stubborn_until"),
                 practice_mode=context.get("practice_mode", False),
                 personality=self.personality,
+                last_proposer=context.get("last_proposer"),
             )
             if inspect.isawaitable(result):
                 result = await result

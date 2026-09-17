@@ -286,7 +286,7 @@ async def practice_start(body: StartRequest):
 # =========================================================
 
 @app.post("/api/practice/turn")
-def practice_turn(body: PracticeTurnRequest):
+async def practice_turn(body: PracticeTurnRequest):
     session_id = body.session_id
 
     if not orchestrator.session_exists(session_id):
@@ -318,9 +318,15 @@ def practice_turn(body: PracticeTurnRequest):
         # 2. If human acceptance closed unanimous agreement early
         if state.get("negotiation_ended"):
             ai_responses = []
+            single_result = None
+            ai_round_finished = True
+            next_agent = None
         else:
-            # 3. Government -> NGO -> District deliberate and respond to human's proposal
-            ai_responses = orchestrator.step_practice_round(session_id)
+            # 3. Step only the FIRST AI agent for this turn (1 Click = 1 Agent)
+            single_result = await orchestrator.step_practice_single_agent_async(session_id)
+            ai_responses = [single_result.get("ai_response")] if single_result.get("ai_response") else []
+            ai_round_finished = single_result.get("ai_round_finished", False)
+            next_agent = single_result.get("next_agent")
 
         current_state = orchestrator.get_state(session_id)
 
@@ -330,7 +336,51 @@ def practice_turn(body: PracticeTurnRequest):
             "human_message": body.message,
             "human_move": human_result,
             "ai_responses": ai_responses,
-            "ai_response": ai_responses[-1] if ai_responses else None,
+            "ai_response": single_result.get("ai_response") if single_result else None,
+            "ai_round_finished": ai_round_finished,
+            "next_agent": next_agent,
+            "state": current_state,
+            "round": current_state.get("current_round", 1),
+            "consensus": current_state.get("consensus", 0.0),
+            "negotiation_ended": current_state.get("negotiation_ended", False),
+            "awaiting_final_decision": current_state.get("awaiting_final_decision", False),
+            "status": current_state.get("status", "Your turn"),
+            "final_allocation": current_state.get("final_allocation"),
+            "final_report": current_state.get("final_report"),
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+
+
+# =========================================================
+# PRACTICE MODE: NEXT AGENT (1 CLICK = 1 AGENT STEP)
+# =========================================================
+
+@app.post("/api/practice/next-agent")
+async def practice_next_agent(body: TurnRequest):
+    session_id = body.session_id
+
+    if not orchestrator.session_exists(session_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found",
+        )
+
+    try:
+        single_result = await orchestrator.step_practice_single_agent_async(session_id)
+        current_state = orchestrator.get_state(session_id)
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "ai_responses": [single_result.get("ai_response")] if single_result.get("ai_response") else [],
+            "ai_response": single_result.get("ai_response"),
+            "ai_round_finished": single_result.get("ai_round_finished", False),
+            "next_agent": single_result.get("next_agent"),
             "state": current_state,
             "round": current_state.get("current_round", 1),
             "consensus": current_state.get("consensus", 0.0),

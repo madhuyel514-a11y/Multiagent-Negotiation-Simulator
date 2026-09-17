@@ -19,7 +19,9 @@ class NGOAgent(BaseAgent):
         prompt += f"\nPriorities: {context.get('agent', {}).get('priorities', [])}"
         prompt += "\nNegotiation style: reason from the stated priorities, protect essential objectives, and make proportionate concessions."
         prompt += f"\nCurrent round: {context.get('current_round', 1)}"
-        prompt += f"\nLatest incoming proposal being evaluated: {context.get('current_proposal', {}) or 'No proposal yet; make the opening offer.'}"
+        last_proposer = context.get("last_proposer")
+        proposer_info = f" (proposed by {last_proposer})" if last_proposer else ""
+        prompt += f"\nLatest incoming proposal being evaluated{proposer_info}: {context.get('current_proposal', {}) or 'No proposal yet; make the opening offer.'}"
 
         resource_quantities = context.get("resource_quantities", {})
         if resource_quantities:
@@ -43,4 +45,5 @@ class NGOAgent(BaseAgent):
             stubborn_until=context.get("stubborn_until"),
             practice_mode=context.get("practice_mode", False),
             personality=self.personality,
+            last_proposer=last_proposer,
         )
